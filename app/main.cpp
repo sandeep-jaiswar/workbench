@@ -1,6 +1,7 @@
 // Workbench: Dear ImGui desktop front end for the java-wasm pipeline.
 // Entry point and root layout. Window and frame loop: app_window.cpp. Panels: *_panel, editor,
 // output and generate_panel sources.
+#include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include "catalog.hpp"
 #include "editor.hpp"
 #include "generate_panel.hpp"
+#include "outline.hpp"
 #include "output.hpp"
 #include "project_panel.hpp"
 #include "java_tools.hpp"
@@ -29,6 +31,7 @@ namespace {
 constexpr float kProjectWidth = 260.0f;
 constexpr float kGenerateWidth = 360.0f;
 constexpr float kOutputHeight = 190.0f;
+constexpr float kOutlineShare = 0.4f;  // share of the left column given to the outline
 
 }  // namespace
 
@@ -49,6 +52,7 @@ int main(int argc, char** argv) {
     wb::Verifier verifier;
     app::ProjectPanel project;
     app::Editor editor;
+    app::Outline outline;
     app::GenerateState generate;
     app::CheckState check;
     app::JavaRun java_run;
@@ -85,12 +89,19 @@ int main(int argc, char** argv) {
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float center_w = avail.x - kProjectWidth - kGenerateWidth - 2.0f * spacing;
 
-        ImGui::BeginChild("project", ImVec2(kProjectWidth, 0), true);
+        // Project tree on top, outline of the active file below it.
+        ImGui::BeginGroup();
+        const float outline_h = std::max(120.0f, avail.y * kOutlineShare);
+        ImGui::BeginChild("project", ImVec2(kProjectWidth, avail.y - outline_h - ImGui::GetStyle().ItemSpacing.y), true);
         app::draw_project_panel(project, [&](const std::filesystem::path& file) {
             std::string error;
             if (!editor.open_file(file, error)) project.status = error;
         });
         ImGui::EndChild();
+        ImGui::BeginChild("outline", ImVec2(kProjectWidth, 0), true);
+        outline.draw(editor.active(), editor);
+        ImGui::EndChild();
+        ImGui::EndGroup();
 
         ImGui::SameLine();
         ImGui::BeginChild("center", ImVec2(center_w, 0), false);

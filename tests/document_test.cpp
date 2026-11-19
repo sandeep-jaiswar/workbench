@@ -119,6 +119,67 @@ void test_undo_cap() {
     CHECK(doc.text() == "v9");
 }
 
+void test_offset_of() {
+    // Empty text: one empty line.
+    auto empty = make("");
+    CHECK(empty.offset_of(1, 1) == 0);
+    CHECK(empty.offset_of(1, 5) == 0);   // column past end clamps to 0
+    CHECK(empty.offset_of(9, 1) == 0);   // line past end clamps to the only line
+
+    // "ab\ncde\n" has three lines: "ab" [0,2), "cde" [3,6), "" [7,7).
+    auto doc = make("ab\ncde\n");
+    CHECK(doc.offset_of(1, 1) == 0);
+    CHECK(doc.offset_of(1, 2) == 1);
+    CHECK(doc.offset_of(1, 3) == 2);     // column just past the text stops before '\n'
+    CHECK(doc.offset_of(1, 99) == 2);
+    CHECK(doc.offset_of(2, 1) == 3);
+    CHECK(doc.offset_of(2, 3) == 5);
+    CHECK(doc.offset_of(3, 1) == 7);     // empty last line after the trailing newline
+    CHECK(doc.offset_of(42, 1) == 7);    // line past the end clamps to the last line
+    CHECK(doc.offset_of(0, 0) == 0);     // 0 is treated as line 1, column 1
+    CHECK(doc.offset_of(2, 0) == 3);
+
+    // No trailing newline: the last line ends at the end of the text.
+    auto tail = make("x\nyz");
+    CHECK(tail.offset_of(2, 2) == 3);
+    CHECK(tail.offset_of(2, 9) == 4);
+
+    // Round trip with the line cache for every position of a multi-line text.
+    auto multi = make("class A {\n  int x;\n}\n");
+    for (std::size_t line = 1; line <= multi.line_count(); ++line) {
+        const std::size_t start = multi.line_start(line - 1);
+        CHECK(multi.offset_of(line, 1) == start);
+        CHECK(multi.line_of_offset(multi.offset_of(line, 1)) == line - 1);
+    }
+
+    // Cache follows edits.
+    doc.set_text("q\nrs");
+    CHECK(doc.offset_of(2, 2) == 3);
+}
+
+void test_version_counter() {
+    auto doc = make("a");
+    const std::size_t v0 = doc.version();
+    doc.set_text("b");
+    CHECK(doc.version() > v0);
+    const std::size_t v1 = doc.version();
+
+    doc.edit_buffer() += "c";
+    doc.commit_edit();
+    CHECK(doc.version() > v1);
+    const std::size_t v2 = doc.version();
+
+    // A commit with no change does not bump the version.
+    doc.commit_edit();
+    CHECK(doc.version() == v2);
+    // set_text with the same text is also not a change.
+    doc.set_text(doc.text());
+    CHECK(doc.version() == v2);
+
+    CHECK(doc.undo());
+    CHECK(doc.version() > v2);
+}
+
 }  // namespace
 
 int main() {
@@ -127,6 +188,8 @@ int main() {
     test_commit_edit_protocol();
     test_undo_basics();
     test_undo_cap();
+    test_offset_of();
+    test_version_counter();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

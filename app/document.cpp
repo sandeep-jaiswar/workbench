@@ -16,6 +16,16 @@ std::size_t Document::line_of_offset(std::size_t offset) const {
     return static_cast<std::size_t>(it - line_starts_.begin()) - 1;
 }
 
+std::size_t Document::offset_of(std::size_t line, std::size_t column) const {
+    // 1-based line and column in, 0-based line index for the cache lookup.
+    const std::size_t last_line = line_starts_.size() - 1;
+    const std::size_t index = line == 0 ? 0 : std::min(line - 1, last_line);
+    const std::size_t start = line_starts_[index];
+    const std::size_t end = index == last_line ? text_.size() : line_starts_[index + 1] - 1;
+    const std::size_t col = column == 0 ? 1 : column;
+    return std::min(start + (col - 1), end);
+}
+
 void Document::commit_edit() {
     if (text_ == committed_) return;
     undo_.push_back(std::move(committed_));
@@ -45,6 +55,7 @@ void Document::mark_saved() {
 }
 
 void Document::refresh() {
+    ++version_;
     line_starts_.clear();
     line_starts_.push_back(0);
     for (std::size_t i = 0; i < text_.size(); ++i) {
