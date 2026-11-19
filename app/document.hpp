@@ -26,6 +26,10 @@ public:
     std::size_t undo_depth() const { return undo_.size(); }
     // Bumped whenever the text changes outside the widget (undo), so the editor can reload it.
     std::size_t revision() const { return revision_; }
+    // Bumped on every change to the text (typing, set_text, undo). Use it to detect that
+    // derived data such as the outline must be recomputed. Unlike revision(), it does not
+    // change the widget ID.
+    std::size_t version() const { return version_; }
 
     // Line queries use the cache. A text with N '\n' characters has N + 1 lines, so
     // empty text has one line.
@@ -33,6 +37,11 @@ public:
     std::size_t line_start(std::size_t line) const { return line_starts_[line]; }
     // 0-based line containing byte `offset` (binary search over the cache).
     std::size_t line_of_offset(std::size_t offset) const;
+    // Byte offset of a position. `line` is 1-based and `column` is 1-based bytes, the same
+    // convention as wb::Symbol and javac. Out-of-range values are clamped: a line past the
+    // end goes to the last line, a column past the end of its line stops before the '\n',
+    // and 0 is treated as 1. O(1) on the line cache.
+    std::size_t offset_of(std::size_t line, std::size_t column) const;
 
     // Mutable buffer for the text widget. Call commit_edit() after it changes.
     std::string& edit_buffer() { return text_; }
@@ -57,6 +66,7 @@ private:
     std::vector<std::size_t> line_starts_;
     bool dirty_ = false;
     std::size_t revision_ = 0;
+    std::size_t version_ = 0;
 };
 
 }  // namespace app

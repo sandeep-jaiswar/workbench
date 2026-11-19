@@ -18,7 +18,10 @@ namespace {
 struct TextCallbackData {
     std::string* text;
     std::size_t* cursor;
+    std::size_t* pending_caret;  // applied once, then reset to kNone
 };
+
+constexpr std::size_t kNoCaret = static_cast<std::size_t>(-1);
 
 // Same pattern as misc/cpp/imgui_stdlib.cpp: ImGui asks for a bigger buffer through
 // CallbackResize and the std::string grows to match. CallbackAlways reports the caret.
@@ -28,6 +31,15 @@ int text_callback(ImGuiInputTextCallbackData* d) {
         data->text->resize(static_cast<std::size_t>(d->BufTextLen));
         d->Buf = data->text->data();
     } else if (d->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+        // A pending goto_line caret is written here, which ImGui reads back after the
+        // callback returns. It is cleared only after it has been applied.
+        if (*data->pending_caret != kNoCaret) {
+            const std::size_t at = std::min(*data->pending_caret,
+                                            static_cast<std::size_t>(d->BufTextLen));
+            d->CursorPos = static_cast<int>(at);
+            d->SelectionStart = d->SelectionEnd = d->CursorPos;
+            *data->pending_caret = kNoCaret;
+        }
         *data->cursor = static_cast<std::size_t>(d->CursorPos);
     }
     return 0;
@@ -49,10 +61,21 @@ bool input_multiline(const char* label, std::string& text, const ImVec2& size,
 
 }  // namespace
 
-bool Editor::open_file(const fs::path& path, std::string& error) {
+namespace {
+
+// The key used to match a path against an open tab.
+fs::path canonical_path(const fs::path& path) {
     std::error_code ec;
     fs::path canonical = fs::weakly_canonical(path, ec);
     if (ec) canonical = fs::absolute(path, ec);
+    return canonical;
+}
+
+}  // namespace
+
+bool Editor::open_file(const fs::path& path, std::string& error) {
+    const fs::path canonical = canonical_path(path);
+    std::error_code ec;
 
     for (std::size_t i = 0; i < tabs_.size(); ++i) {
         if (tabs_[i].doc->path() == canonical) {
@@ -73,6 +96,21 @@ bool Editor::open_file(const fs::path& path, std::string& error) {
     tabs_.push_back(std::move(tab));
     select_next_ = tabs_.size() - 1;
     message_ = "Opened " + canonical.filename().string();
+    return true;
+}
+
+bool Editor::goto_line(const fs::path& path, std::size_t line, std::size_t column,
+                       std::string& error) {
+    if (!open_file(path, error)) return false;
+    const fs::path key = canonical_path(path);
+    for (const Tab& tab : tabs_) {
+        if (tab.doc->path() == key) {
+            goto_serial_ = tab.serial;
+            goto_line_ = line;
+            goto_column_ = column;
+            break;
+        }
+    }
     return true;
 }
 
@@ -147,9 +185,28 @@ void Editor::draw_body(Tab& tab) {
     ImGui::BeginChild("code", ImVec2(0, code_h), ImGuiChildFlags_None, ImGuiWindowFlags_None);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 win_pos = ImGui::GetWindowPos();
-    const float scroll_y = ImGui::GetScrollY();
+    float scroll_y = ImGui::GetScrollY();
     const float view_h = ImGui::GetWindowHeight();
     const float text_h = static_cast<float>(lines) * line_h + 2.0f * pad_y + line_h;
+
+    // A pending goto_line: place the caret, centre its line and take keyboard focus.
+    bool take_focus = false;
+    if (goto_serial_ == tab.serial) {
+        const std::size_t target = doc.offset_of(goto_line_, goto_column_);
+        const std::size_t target_line = doc.line_of_offset(target);
+        tab.cursor = target;
+        tab.followed = target;  // the follow logic below must not fight the centring
+        tab.pending_caret = target;
+        tab.scroll_to = pad_y + static_cast<float>(target_line) * line_h;
+        tab.scroll_frames = 3;  // the child's content size is only known after a frame
+        goto_serial_ = kNone;
+        take_focus = true;
+    }
+    if (tab.scroll_frames > 0) {
+        --tab.scroll_frames;
+        ImGui::SetScrollY(std::max(0.0f, tab.scroll_to - view_h * 0.5f));
+    }
+    scroll_y = ImGui::GetScrollY();  // the gutter below must use the applied scroll
 
     // Scroll so the caret stays in view when it moves.
     const std::size_t caret = std::min(tab.cursor, doc.text().size());
@@ -181,11 +238,11 @@ void Editor::draw_body(Tab& tab) {
 
     ImGui::SetCursorPos(ImVec2(gutter_w, 0.0f));
     ImGui::PushID(static_cast<int>(tab.serial * 4096 + doc.revision()));
-    if (refocus_) {
+    if (refocus_ || take_focus) {
         ImGui::SetKeyboardFocusHere();
         refocus_ = false;
     }
-    TextCallbackData data{&doc.edit_buffer(), &tab.cursor};
+    TextCallbackData data{&doc.edit_buffer(), &tab.cursor, &tab.pending_caret};
     if (input_multiline("##code", doc.edit_buffer(), ImVec2(-FLT_MIN, text_h), data)) {
         doc.commit_edit();
     }

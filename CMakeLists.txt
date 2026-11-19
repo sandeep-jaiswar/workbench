@@ -59,6 +59,7 @@ add_executable(workbench
     app/architect.cpp
     app/java_tools.cpp
     app/output.cpp
+    app/outline.cpp
     app/project.cpp
     app/project_panel.cpp
     app/task_trace.cpp

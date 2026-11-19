@@ -94,10 +94,10 @@ void draw_build_tab(JavaRun& run, Editor& editor, const fs::path& root) {
                 // paths are resolved against the project root.
                 fs::path file = d.file;
                 if (file.is_relative()) file = root / file;
-                // The editor has no caret API, so this opens the file and does not move
-                // the caret to d.line.
+                // javac reports only the line, so the caret goes to column 1 of that line.
                 std::string error;
-                run.open_error = editor.open_file(file, error) ? std::string() : error;
+                const std::size_t line = d.line > 0 ? static_cast<std::size_t>(d.line) : 1;
+                run.open_error = editor.goto_line(file, line, 1, error) ? std::string() : error;
             }
             ImGui::PopID();
         }
