@@ -12,7 +12,7 @@ include(FetchContent)
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        13df0e762353af988163511d7cc1bc507267ca68)
+    GIT_TAG        bf68e68424d5f811de5a57e6288fca886f4c321f)
 FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
