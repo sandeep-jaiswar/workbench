@@ -297,13 +297,17 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
 
     g.add_node("report", guarded("report",
         [](const State& s, Trace&, Patch&) {
-            const std::string reason = text(s, "reason");
-            std::string summary = reason.empty() ? std::string("all steps passed")
-                                                 : "stopped at " + [&] {
-                                                       std::string one = reason;
-                                                       std::replace(one.begin(), one.end(), '\n', ' ');
-                                                       return one;
-                                                   }();
+            std::string reason = text(s, "reason");
+            std::replace(reason.begin(), reason.end(), '\n', ' ');
+            std::string summary;
+            if (flag(s, "debug_fixed")) {
+                // A green proposal exists: the run did not stop, it is waiting for a human to apply.
+                summary = "proposal ready, not applied; before the fix: " + reason;
+            } else if (reason.empty()) {
+                summary = "all steps passed";
+            } else {
+                summary = "stopped at " + reason;
+            }
             const int attempts = integer(s, "attempts");
             if (attempts > 0) summary += "; fix attempts " + std::to_string(attempts);
             return Outcome{NodeStatus::ok, summary};

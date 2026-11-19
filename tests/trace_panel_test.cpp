@@ -373,6 +373,7 @@ void test_fake_fixer_records_rationale_and_routes_to_report() {
     CHECK(row(snap, "debug").summary == "attempt 1: round half up in FlatTax");
     CHECK(row(snap, "report").status == NodeStatus::ok);
     CHECK(row(snap, "report").summary.find("fix attempts 1") != std::string::npos);
+    CHECK(row(snap, "report").summary.rfind("proposal ready, not applied", 0) == 0);
     CHECK(step_order(snap) == (std::vector<std::string>{
               "analyze", "architect", "generate", "check", "compile", "test", "debug", "report"}));
     CHECK(has_edge(snap, "-> report"));
