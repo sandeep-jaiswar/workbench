@@ -17,6 +17,7 @@ FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
 find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 
 FetchContent_Declare(glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -57,9 +58,12 @@ add_executable(workbench
     app/generate_panel.cpp
     app/output.cpp
     app/project.cpp
-    app/project_panel.cpp)
-target_include_directories(workbench PRIVATE app)
-target_link_libraries(workbench PRIVATE wb_core imgui)
+    app/project_panel.cpp
+    app/task_trace.cpp
+    app/trace_panel.cpp)
+# task_trace.hpp includes the graph engine header from java-wasm's src/graph.
+target_include_directories(workbench PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
+target_link_libraries(workbench PRIVATE wb_core imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
     WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json")
@@ -70,3 +74,9 @@ enable_testing()
 add_executable(document_test tests/document_test.cpp app/document.cpp)
 target_include_directories(document_test PRIVATE app)
 add_test(NAME document_test COMMAND document_test)
+
+# Trace panel's task runner, headless: wb_core only, no ImGui or GLFW.
+add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp)
+target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
+target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
+add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)

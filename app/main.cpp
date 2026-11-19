@@ -14,6 +14,8 @@
 #include "generate_panel.hpp"
 #include "output.hpp"
 #include "project_panel.hpp"
+#include "task_trace.hpp"
+#include "trace_panel.hpp"
 #include "verify.hpp"
 
 #ifndef WB_DEFAULT_CATALOG
@@ -47,6 +49,9 @@ int main(int argc, char** argv) {
     app::Editor editor;
     app::GenerateState generate;
     app::CheckState check;
+    app::TracePanel trace;
+    trace.services = app::task::make_services(catalog);
+    bool show_trace = false;
     project.open_folder();
 
     window.run([&] {
@@ -80,8 +85,19 @@ int main(int argc, char** argv) {
 
         ImGui::SameLine();
         ImGui::BeginChild("generate", ImVec2(kGenerateWidth, 0), true);
+        if (ImGui::Button("Task trace")) show_trace = !show_trace;
         app::draw_generate_panel(generate, catalog, verifier);
         ImGui::EndChild();
+
+        if (show_trace) {
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 300.0f, vp->WorkPos.y + 120.0f),
+                                    ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(640.0f, 460.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Task trace", &show_trace)) {
+                app::draw_trace_panel(trace, editor.active(), generate.name);
+            }
+            ImGui::End();
+        }
 
         ImGui::End();
     });
