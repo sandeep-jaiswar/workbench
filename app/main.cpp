@@ -13,6 +13,10 @@
 #include "engine.hpp"
 #include "verify.hpp"
 
+#ifndef WB_DEFAULT_CATALOG
+#define WB_DEFAULT_CATALOG "catalog/patterns.json"
+#endif
+
 namespace {
 
 void glfw_error(int code, const char* desc) {
@@ -22,7 +26,7 @@ void glfw_error(int code, const char* desc) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    const std::string catalog_path = argc > 1 ? argv[1] : "catalog/patterns.json";
+    const std::string catalog_path = argc > 1 ? argv[1] : WB_DEFAULT_CATALOG;
 
     wb::Catalog catalog;
     wb::Verifier verifier;
