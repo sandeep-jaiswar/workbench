@@ -57,6 +57,7 @@ add_executable(workbench
     app/editor.cpp
     app/generate_panel.cpp
     app/architect.cpp
+    app/architect_rules.cpp
     app/java_tools.cpp
     app/output.cpp
     app/outline.cpp
@@ -85,13 +86,18 @@ add_test(NAME java_tools_test COMMAND java_tools_test)
 
 # Trace panel's task runner, headless: wb_core only, no ImGui or GLFW.
 add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp app/architect.cpp
-               app/java_tools.cpp)
+               app/architect_rules.cpp app/java_tools.cpp)
 target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
 add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)
 
 # "Tests for missing classes": headless, wb_core only.
-add_executable(test_gen_test tests/test_gen_test.cpp app/test_gen.cpp app/architect.cpp)
+add_executable(test_gen_test tests/test_gen_test.cpp app/test_gen.cpp app/architect.cpp app/architect_rules.cpp)
 target_include_directories(test_gen_test PRIVATE app)
 target_link_libraries(test_gen_test PRIVATE wb_core)
 add_test(NAME test_gen COMMAND test_gen_test)
+# Architecture graph and rules: pure, wb_core only, no ImGui or GLFW.
+add_executable(architect_rules_test tests/architect_rules_test.cpp app/architect_rules.cpp)
+target_include_directories(architect_rules_test PRIVATE app)
+target_link_libraries(architect_rules_test PRIVATE wb_core)
+add_test(NAME architect_rules COMMAND architect_rules_test)
