@@ -47,9 +47,11 @@ GLFW is built with the X11 backend only. For Wayland, install `wayland-scanner` 
 - Done: debug step can use a local model. Set `WB_MODEL=/path/to/model.gguf` before starting; the
   fixer then proposes a whole-file fix for the failing class, which still goes through the staged
   check and the confirmed apply.
+- Each proposal is staged (javac and tests on a copy) before the debug step accepts it. A rejected
+  proposal goes back to the model with the reason and the failing assertions, up to 3 attempts.
 - Tested end to end (headless): a broken `Cart.java` in a copy of the sample was found by javac and
-  the tests, and the local 1.5B model (Qwen2.5-Coder-1.5B Q4_K_M, CPU) returned a reply. It did not
-  fix the bug on a single attempt, so the apply step is not reached with the 1.5B model yet.
+  the tests. The local 1.5B model (Qwen2.5-Coder-1.5B Q4_K_M, CPU) returned the file unchanged on all
+  three attempts, so no proposal reached apply. The retry path itself is covered by unit tests.
 - Not included: model weights. Download one separately (Apache 2.0 recommended).
 
 ## License

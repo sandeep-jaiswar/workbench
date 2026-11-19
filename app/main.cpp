@@ -21,6 +21,7 @@
 #include "task_trace.hpp"
 #include "llm.hpp"
 #include "llm_fixer.hpp"
+#include "apply_fix.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -40,6 +41,27 @@ constexpr float kOutputHeight = 190.0f;
 constexpr float kOutlineShare = 0.4f;  // share of the left column given to the outline
 
 // "N passed, M failed; FAIL a, b" for the failure report. Long lists are cut after five names.
+// The last `max` bytes of `s`, starting at a line boundary.
+std::string clip_tail(const std::string& s, std::size_t max) {
+    if (s.size() <= max) return s;
+    const std::size_t from = s.find('\n', s.size() - max);
+    return from == std::string::npos ? s.substr(s.size() - max) : s.substr(from + 1);
+}
+
+// The "FAIL ..." lines of a test run, each with its assertion message, capped in size.
+std::string failure_details(const std::string& output) {
+    std::string out;
+    std::size_t at = 0;
+    while (at < output.size() && out.size() < 2000) {
+        std::size_t end = output.find('\n', at);
+        if (end == std::string::npos) end = output.size();
+        const std::string line = output.substr(at, end - at);
+        if (line.compare(0, 5, "FAIL ") == 0) out += "\n" + line;
+        at = end + 1;
+    }
+    return out;
+}
+
 std::string describe_tests(const wbx::TestResult& t) {
     std::string s = std::to_string(t.passed) + " passed, " + std::to_string(t.failed) + " failed";
     if (t.failing.empty()) return s;
@@ -97,7 +119,18 @@ int main(int argc, char** argv) {
             throw std::runtime_error(r.timed_out ? std::string("tests timed out")
                                                  : "tests exit " + std::to_string(r.exit_code));
         }
-        throw std::runtime_error(describe_tests(t));
+        // The FAIL lines carry each assertion message; the debug step needs them to propose a fix.
+        throw std::runtime_error(describe_tests(t) + failure_details(r.output));
+    };
+    // Stages a proposal in a copy of the project. Empty means green; otherwise the reason.
+    trace.services.check_proposal = [&project](const app::fixer::Proposal& prop) -> std::string {
+        const std::string dir = project.tree.root().path.string();
+        if (dir.empty()) return "open a project folder first";
+        const app::apply_fix::StageResult staged = app::apply_fix::stage(dir, prop);
+        if (!staged.error.empty()) return "staging failed: " + staged.error;
+        if (!staged.compiled) return "javac failed:\n" + clip_tail(staged.compile_output, 1500);
+        if (!staged.tested) return "tests failed:\n" + clip_tail(staged.test_output, 1500);
+        return "";
     };
     // The project's outline for the architect step.
     trace.services.architect = [&project]() -> app::architect::Outline {

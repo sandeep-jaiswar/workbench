@@ -35,6 +35,11 @@ int main(int argc, char** argv) {
     with_test.test_source = "class CartTest { void total() {} }";
     check(build_prompt(with_test).user.find("class CartTest") != std::string::npos,
           "prompt includes the failing test source");
+    FailureContext retry = ctx;
+    retry.feedback = "javac failed: missing semicolon";
+    check(build_prompt(retry).user.find("previous reply was rejected") != std::string::npos &&
+              build_prompt(retry).user.find("missing semicolon") != std::string::npos,
+          "prompt carries the rejection reason");
     check(test_path_for("src/demo/Cart.java") == "test/demo/CartTest.java", "maps src class to test class");
     check(test_path_for("README.md").empty(), "non-source path has no test class");
 

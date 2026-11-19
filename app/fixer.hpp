@@ -15,6 +15,7 @@ struct FailureContext {
     std::string class_source;  // text the proposal will be made against
     std::string test_output;   // failure report, e.g. "1 passed, 1 failed; FAIL demo.CartTest.x"
     std::string test_source;   // the failing test class, when it exists; may be empty
+    std::string feedback;      // why the previous proposal was rejected; empty on the first try
     int attempt = 0;
 };
 

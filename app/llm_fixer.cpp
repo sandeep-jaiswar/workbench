@@ -27,6 +27,9 @@ Prompt build_prompt(const FailureContext& ctx) {
     if (!ctx.test_source.empty())
         p.user += "\nFailing test class (its expectations are the spec):\n```java\n" +
                   ctx.test_source + "\n```\n";
+    if (!ctx.feedback.empty())
+        p.user += "\nYour previous reply was rejected:\n" + ctx.feedback +
+                  "\nFix that and reply with the complete file again.\n";
     return p;
 }
 
@@ -64,7 +67,6 @@ Fixer make_llm_fixer(std::shared_ptr<wb::llm::Model> model) {
 
         const std::string code = extract_java(reply);
         if (code.empty()) throw std::runtime_error("reply has no complete java code block");
-        if (code == ctx.class_source) throw std::runtime_error("reply made no change");
 
         Proposal proposal;
         proposal.class_path = ctx.class_path;

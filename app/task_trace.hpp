@@ -46,6 +46,11 @@ struct Services {
     std::function<app::architect::Outline()> architect;
     // Project folder. Debug uses it to find the failing class on disk. Unset: debug skipped.
     std::function<std::string()> project_dir;
+    // Checks a proposal in a copy of the project (javac and tests). Returns "" when it is green,
+    // otherwise the reason. Unset: the first proposal is accepted without a check.
+    std::function<std::string(const app::fixer::Proposal&)> check_proposal;
+    // Fixer attempts per debug step. Each rejected proposal goes back to the fixer with its reason.
+    int max_fix_attempts = 3;
     // Optional fixer. Receives the failure context and returns a proposal, or throws when it
     // has none. Unset: debug records skipped. The proposal is only shown; nothing is applied
     // by the graph. The debug node fills project_dir, class_path and class_source (from disk).

@@ -210,13 +210,12 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
         }, board));
 
     g.add_node("debug", guarded("debug",
-        [fixer = services.fixer, project_dir = services.project_dir, board](
+        [fixer = services.fixer, project_dir = services.project_dir,
+         check = services.check_proposal, max_attempts = services.max_fix_attempts, board](
             const State& s, Trace& t, Patch& p) {
             if (!fixer) return Outcome{NodeStatus::skipped, "not wired (no fixer)"};
-            const int attempt = integer(s, "attempts") + 1;
-            p["attempts"] = attempt;
+            const int before = integer(s, "attempts");
             app::fixer::FailureContext ctx;
-            ctx.attempt = attempt;
             ctx.test_output = text(s, "reason");
             ctx.project_dir = project_dir ? project_dir() : std::string();
             // The failing class is read from disk: a proposal is a whole-file replacement of it.
@@ -247,31 +246,64 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
                     ctx.test_source = buf.str();
                 }
             }
-            app::fixer::Proposal proposal;
-            try {
-                proposal = fixer(ctx);
-            } catch (const std::exception& e) {
-                p["debug_fixed"] = false;
-                return Outcome{NodeStatus::skipped, std::string("no proposal: ") + e.what()};
-            } catch (...) {
-                p["debug_fixed"] = false;
-                return Outcome{NodeStatus::skipped, "no proposal: unknown exception"};
+
+            std::string last_reason;
+            for (int k = 1; k <= std::max(1, max_attempts); ++k) {
+                const int attempt = before + k;
+                p["attempts"] = attempt;
+                ctx.attempt = attempt;
+                ctx.feedback = last_reason;
+                app::fixer::Proposal proposal;
+                try {
+                    proposal = fixer(ctx);
+                } catch (const std::exception& e) {
+                    p["debug_fixed"] = false;
+                    const std::string why = std::string(e.what());
+                    if (k == 1) return Outcome{NodeStatus::skipped, "no proposal: " + why};
+                    return Outcome{NodeStatus::failed, "no green proposal: " + why};
+                } catch (...) {
+                    p["debug_fixed"] = false;
+                    return Outcome{NodeStatus::skipped, "no proposal: unknown exception"};
+                }
+                // The proposal was made against the text the fixer saw; apply() checks it.
+                proposal.base_source = ctx.class_source;
+                if (proposal.new_source == ctx.class_source) {
+                    // Unchanged is a rejection, not an end: the next attempt gets the same report.
+                    last_reason = "your reply made no change; the test report is still:\n" + ctx.test_output;
+                    t.log("attempt " + std::to_string(attempt) + " rejected: no change");
+                    continue;
+                }
+                if (check) {
+                    last_reason = check(proposal);
+                    if (!last_reason.empty()) {
+                        std::string first = last_reason.substr(0, last_reason.find('\n'));
+                        t.log("attempt " + std::to_string(attempt) + " rejected: " + first);
+                        continue;
+                    }
+                }
+                std::string rationale = proposal.rationale;
+                std::replace(rationale.begin(), rationale.end(), '\n', ' ');
+                p["debug_fixed"] = true;
+                board->set_proposal(proposal);
+                t.log("attempt " + std::to_string(attempt) + ": " + rationale);
+                return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + rationale};
             }
-            // The proposal was made against the text the fixer saw; apply() checks it.
-            proposal.base_source = ctx.class_source;
-            std::string rationale = proposal.rationale;
-            std::replace(rationale.begin(), rationale.end(), '\n', ' ');
-            p["debug_fixed"] = true;
-            board->set_proposal(proposal);
-            t.log("attempt " + std::to_string(attempt) + ": " + rationale);
-            return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + rationale};
+            p["debug_fixed"] = false;
+            std::string first = last_reason.substr(0, last_reason.find('\n'));
+            return Outcome{NodeStatus::failed, "no green proposal after " +
+                                                   std::to_string(std::max(1, max_attempts)) +
+                                                   " attempts: " + first};
         }, board));
 
     g.add_node("report", guarded("report",
         [](const State& s, Trace&, Patch&) {
             const std::string reason = text(s, "reason");
             std::string summary = reason.empty() ? std::string("all steps passed")
-                                                 : "stopped at " + reason;
+                                                 : "stopped at " + [&] {
+                                                       std::string one = reason;
+                                                       std::replace(one.begin(), one.end(), '\n', ' ');
+                                                       return one;
+                                                   }();
             const int attempts = integer(s, "attempts");
             if (attempts > 0) summary += "; fix attempts " + std::to_string(attempts);
             return Outcome{NodeStatus::ok, summary};
