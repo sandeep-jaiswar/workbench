@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "language": "java",
+  "patterns": [
+    {
+      "id": "singleton",
+      "name": "Singleton",
+      "intent": "Ensure a class has exactly one instance and provide a global access point to it.",
+      "params": ["Name"],
+      "template": "public final class {{Name}} {\n    private static {{Name}} instance;\n\n    private {{Name}}() {}\n\n    public static synchronized {{Name}} getInstance() {\n        if (instance == null) {\n            instance = new {{Name}}();\n        }\n        return instance;\n    }\n}\n",
+      "requires": {
+        "types": ["{{Name}}"],
+        "methods": ["getInstance"]
+      }
+    },
+    {
+      "id": "strategy",
+      "name": "Strategy",
+      "intent": "Define a family of interchangeable algorithms behind one interface and select one at runtime.",
+      "params": ["Name"],
+      "template": "public interface {{Name}}Strategy {\n    int execute(int a, int b);\n}\n\npublic final class {{Name}}Context {\n    private final {{Name}}Strategy strategy;\n\n    public {{Name}}Context({{Name}}Strategy strategy) {\n        this.strategy = strategy;\n    }\n\n    public int run(int a, int b) {\n        return strategy.execute(a, b);\n    }\n}\n",
+      "requires": {
+        "types": ["{{Name}}Strategy", "{{Name}}Context"],
+        "methods": ["execute", "run"]
+      }
+    },
+    {
+      "id": "observer",
+      "name": "Observer",
+      "intent": "Let subscribers be notified automatically when a subject's state changes.",
+      "params": ["Name"],
+      "template": "import java.util.ArrayList;\nimport java.util.List;\n\npublic interface {{Name}}Listener {\n    void onChange(String event);\n}\n\npublic final class {{Name}}Subject {\n    private final List<{{Name}}Listener> listeners = new ArrayList<>();\n\n    public void subscribe({{Name}}Listener listener) {\n        listeners.add(listener);\n    }\n\n    public void unsubscribe({{Name}}Listener listener) {\n        listeners.remove(listener);\n    }\n\n    public void publish(String event) {\n        for ({{Name}}Listener listener : listeners) {\n            listener.onChange(event);\n        }\n    }\n}\n",
+      "requires": {
+        "types": ["{{Name}}Listener", "{{Name}}Subject"],
+        "methods": ["subscribe", "unsubscribe", "publish"]
+      }
+    }
+  ]
+}
