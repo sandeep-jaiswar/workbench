@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
     app::Editor editor;
     app::GenerateState generate;
     app::CheckState check;
+    app::JavaRun java_run;
     project.open_folder();
 
     window.run([&] {
@@ -74,7 +75,9 @@ int main(int argc, char** argv) {
         editor.draw();
         ImGui::EndChild();
         ImGui::BeginChild("output", ImVec2(0, 0), true);
-        app::draw_output_panel(check, verifier, editor.active());
+        app::draw_output_panel(check, verifier, editor.active(), java_run, editor,
+                               project.tree.is_open() ? project.tree.root().path
+                                                      : std::filesystem::path());
         ImGui::EndChild();
         ImGui::EndChild();
 

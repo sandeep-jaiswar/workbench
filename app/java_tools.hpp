@@ -12,6 +12,13 @@ struct RunResult {
     std::string output;       // stdout and stderr combined, capped at 64 KiB
 };
 
+// One javac error: "<file>:<line>: error: <message>".
+struct Diagnostic {
+    std::string file;
+    int line = 0;
+    std::string message;
+};
+
 // Runs argv[0] with argv[1..] and captures output. Kills the child after timeout_seconds.
 RunResult run_process(const std::vector<std::string>& argv, double timeout_seconds);
 
@@ -20,5 +27,8 @@ RunResult compile_project(const std::string& project_dir);
 
 // java -cp out/classes:out/test-classes <main_class> in <project>.
 RunResult run_tests(const std::string& project_dir, const std::string& main_class);
+
+// Extracts the javac error lines from captured output. Other lines are ignored.
+std::vector<Diagnostic> parse_javac_output(const std::string& output);
 
 }  // namespace wbx

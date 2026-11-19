@@ -1,15 +1,111 @@
 #include "output.hpp"
 
 #include <string>
+#include <utility>
 
 #include "imgui.h"
 
+namespace fs = std::filesystem;
+
 namespace app {
 
-void draw_output_panel(CheckState& state, wb::Verifier& verifier, const Document* doc) {
-    ImGui::TextUnformatted("Output: Check your Java");
-    ImGui::Separator();
+JavaRun::~JavaRun() {
+    if (worker_.joinable()) worker_.join();
+}
 
+void JavaRun::start(const std::string& title, std::function<wbx::RunResult()> job) {
+    if (busy_) return;
+    title_ = title;
+    busy_ = true;
+    has_result_ = false;
+    diagnostics_.clear();
+    open_error.clear();
+    worker_ = std::thread([this, job = std::move(job)] {
+        wbx::RunResult r = job();
+        std::lock_guard<std::mutex> lock(mu_);
+        pending_ = std::move(r);
+        done_ = true;
+    });
+}
+
+void JavaRun::poll() {
+    if (!busy_) return;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!done_) return;
+        shown_ = std::move(pending_);
+        pending_ = wbx::RunResult{};
+        done_ = false;
+    }
+    worker_.join();
+    busy_ = false;
+    has_result_ = true;
+    diagnostics_ = wbx::parse_javac_output(shown_.output);
+}
+
+namespace {
+
+void draw_build_tab(JavaRun& run, Editor& editor, const fs::path& root) {
+    const bool busy = run.busy();
+    const std::string root_str = root.string();
+
+    ImGui::BeginDisabled(busy || root.empty());
+    if (ImGui::Button("Build")) {
+        run.start("Build", [root_str] { return wbx::compile_project(root_str); });
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Test")) {
+        run.start("Test", [root_str] { return wbx::run_tests(root_str, "demo.TestRunner"); });
+    }
+    ImGui::EndDisabled();
+
+    if (root.empty()) {
+        ImGui::TextDisabled("Open a project folder first.");
+    } else if (busy) {
+        ImGui::Text("%s running...", run.title().c_str());
+    } else if (run.has_result()) {
+        const wbx::RunResult& r = run.result();
+        if (r.timed_out) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s timed out", run.title().c_str());
+        } else {
+            ImGui::Text("%s finished, exit %d", run.title().c_str(), r.exit_code);
+        }
+    }
+
+    const float avail = ImGui::GetContentRegionAvail().y;
+    const bool has_diags = !run.diagnostics().empty();
+    const float out_h = has_diags ? avail * 0.6f : avail;
+    ImGui::BeginChild("run_output", ImVec2(0, out_h), true, ImGuiWindowFlags_HorizontalScrollbar);
+    if (run.has_result()) ImGui::TextUnformatted(run.result().output.c_str());
+    ImGui::EndChild();
+
+    if (!run.open_error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", run.open_error.c_str());
+
+    if (has_diags) {
+        ImGui::BeginChild("diagnostics", ImVec2(0, 0), true);
+        const auto& diags = run.diagnostics();
+        for (std::size_t i = 0; i < diags.size(); ++i) {
+            const wbx::Diagnostic& d = diags[i];
+            const std::string name = fs::path(d.file).filename().string();
+            const std::string label = name + ":" + std::to_string(d.line) + "  " + d.message;
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(label.c_str())) {
+                // javac prints the paths it was given, which are absolute. Relative
+                // paths are resolved against the project root.
+                fs::path file = d.file;
+                if (file.is_relative()) file = root / file;
+                // The editor has no caret API, so this opens the file and does not move
+                // the caret to d.line.
+                std::string error;
+                run.open_error = editor.open_file(file, error) ? std::string() : error;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+    }
+}
+
+void draw_syntax_tab(CheckState& state, wb::Verifier& verifier, const Document* doc) {
     if (doc == nullptr) {
         ImGui::TextDisabled("Open a .java file to check its syntax.");
         return;
@@ -37,6 +133,26 @@ void draw_output_panel(CheckState& state, wb::Verifier& verifier, const Document
         ImGui::Text("line %u: %s %s", issue.line, kind, issue.node_type.c_str());
     }
     ImGui::EndChild();
+}
+
+}  // namespace
+
+void draw_output_panel(CheckState& state, wb::Verifier& verifier, const Document* doc,
+                       JavaRun& run, Editor& editor, const fs::path& project_root) {
+    run.poll();
+    ImGui::TextUnformatted("Output");
+    ImGui::Separator();
+    if (ImGui::BeginTabBar("output_tabs")) {
+        if (ImGui::BeginTabItem("Build and test")) {
+            draw_build_tab(run, editor, project_root);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Syntax")) {
+            draw_syntax_tab(state, verifier, doc);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
 }
 
 }  // namespace app

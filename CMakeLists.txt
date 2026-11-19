@@ -55,11 +55,13 @@ add_executable(workbench
     app/document.cpp
     app/editor.cpp
     app/generate_panel.cpp
+    app/java_tools.cpp
     app/output.cpp
     app/project.cpp
     app/project_panel.cpp)
 target_include_directories(workbench PRIVATE app)
-target_link_libraries(workbench PRIVATE wb_core imgui)
+find_package(Threads REQUIRED)
+target_link_libraries(workbench PRIVATE wb_core imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
     WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json")
@@ -70,3 +72,7 @@ enable_testing()
 add_executable(document_test tests/document_test.cpp app/document.cpp)
 target_include_directories(document_test PRIVATE app)
 add_test(NAME document_test COMMAND document_test)
+
+add_executable(java_tools_test tests/java_tools_test.cpp app/java_tools.cpp)
+target_include_directories(java_tools_test PRIVATE app)
+add_test(NAME java_tools_test COMMAND java_tools_test)
