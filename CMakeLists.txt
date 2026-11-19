@@ -10,9 +10,10 @@ include(FetchContent)
 # For local development, point at a checkout:
 #   cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_JAVA_WASM=/path/to/java-wasm
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
+set(WB_LLM ON CACHE BOOL "" FORCE)           # native local model (llama.cpp) for the fixer
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        e831df9a24e9e328ca786f23092a39d20a004330)
+    GIT_TAG        5f9caa6ede41a05fffef60c9341c745927df8a18)
 FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
@@ -60,6 +61,7 @@ add_executable(workbench
     app/architect_rules.cpp
     app/apply_fix.cpp
     app/fixer.cpp
+    app/llm_fixer.cpp
     app/java_tools.cpp
     app/output.cpp
     app/outline.cpp
@@ -70,7 +72,7 @@ add_executable(workbench
     app/trace_panel.cpp)
 target_include_directories(workbench PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 find_package(Threads REQUIRED)
-target_link_libraries(workbench PRIVATE wb_core imgui Threads::Threads)
+target_link_libraries(workbench PRIVATE wb_core wb_llm imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
     WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json")
@@ -87,7 +89,7 @@ target_include_directories(java_tools_test PRIVATE app)
 add_test(NAME java_tools_test COMMAND java_tools_test)
 
 # Trace panel's task runner, headless: wb_core only, no ImGui or GLFW.
-add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp app/architect.cpp
+add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp app/fixer.cpp app/architect.cpp
                app/architect_rules.cpp app/java_tools.cpp)
 target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
@@ -109,3 +111,11 @@ add_executable(apply_fix_test tests/apply_fix_test.cpp app/apply_fix.cpp app/fix
 target_include_directories(apply_fix_test PRIVATE app)
 target_link_libraries(apply_fix_test PRIVATE wb_core Threads::Threads)
 add_test(NAME apply_fix_test COMMAND apply_fix_test)
+
+# LLM fixer: prompt, reply parsing and error paths. Pass a GGUF path to also run one real
+# completion: cmake -DWB_TEST_MODEL=/path/to/model.gguf (the real run is skipped when empty).
+set(WB_TEST_MODEL "" CACHE FILEPATH "GGUF model for llm_fixer_test (optional)")
+add_executable(llm_fixer_test tests/llm_fixer_test.cpp app/llm_fixer.cpp app/fixer.cpp)
+target_include_directories(llm_fixer_test PRIVATE app)
+target_link_libraries(llm_fixer_test PRIVATE wb_llm)
+add_test(NAME llm_fixer COMMAND llm_fixer_test ${WB_TEST_MODEL})

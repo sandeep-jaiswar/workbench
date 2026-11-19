@@ -2,6 +2,8 @@
 // Usage: trace_panel_test [catalog.json]. With a catalog, one case also runs the real Singleton generator.
 // CHECK is used instead of assert because Release builds define NDEBUG.
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
@@ -320,13 +322,28 @@ void test_architect_failure_routes_to_report() {
     CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "report"}));
 }
 
+// A throwaway project whose src/demo/Cart.java holds `source`. The failing test
+// demo.CartTest.* maps to that file. Returns the project folder.
+std::string make_project(const std::string& source) {
+    namespace fs = std::filesystem;
+    static int counter = 0;
+    const fs::path dir = fs::temp_directory_path() /
+        ("wb_trace_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         "_" + std::to_string(counter++));
+    fs::create_directories(dir / "src" / "demo");
+    std::ofstream(dir / "src" / "demo" / "Cart.java") << source;
+    return dir.string();
+}
+
 // The fake fixer returns a fixed proposal. Debug records the rationale, keeps the proposal on
 // the board, and routes to report: nothing is applied and test is not run again.
 void test_fake_fixer_records_rationale_and_routes_to_report() {
     int test_runs = 0;
     int fixer_calls = 0;
     app::fixer::FailureContext seen;
+    const std::string dir = make_project(kGood);
     Services s = fake(kGood);
+    s.project_dir = [dir] { return dir; };
     s.compile = [] { return std::string("javac exit 0"); };
     s.test = [&test_runs]() -> std::string {
         ++test_runs;
@@ -346,8 +363,11 @@ void test_fake_fixer_records_rationale_and_routes_to_report() {
     CHECK(fixer_calls == 1);
     CHECK(test_runs == 1);
     CHECK(seen.test_output.find("testTaxRoundsHalfUp") != std::string::npos);
+    CHECK(seen.class_path == "src/demo/Cart.java");
+    CHECK(seen.project_dir == dir);
     CHECK(seen.class_source == kGood);
     CHECK(seen.attempt == 1);
+    std::filesystem::remove_all(dir);
     CHECK(snap.outcome == "ok");
     CHECK(row(snap, "debug").status == NodeStatus::ok);
     CHECK(row(snap, "debug").summary == "attempt 1: round half up in FlatTax");
@@ -375,14 +395,37 @@ void test_unset_fixer_records_skipped_without_proposal() {
     CHECK(row(snap, "report").status == NodeStatus::ok);
 }
 
+// The fixer is never called when the failing class cannot be found on disk.
+void test_fixer_skipped_without_failing_class() {
+    int fixer_calls = 0;
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed; FAIL demo.CartTest.x"); };
+    s.project_dir = [] { return std::string("/nonexistent/project/dir"); };
+    s.fixer = [&](const app::fixer::FailureContext&) -> app::fixer::Proposal {
+        ++fixer_calls;
+        throw std::runtime_error("should not run");
+    };
+    const Snapshot snap = run_sync(kGood, s);
+
+    CHECK(fixer_calls == 0);
+    CHECK(row(snap, "debug").status == NodeStatus::skipped);
+    CHECK(row(snap, "debug").summary == "no failing class found in the project");
+    CHECK(!snap.proposal.has_value());
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+}
+
 void test_fixer_that_throws_routes_to_report() {
     Services s = fake(kGood);
     s.compile = [] { return std::string("javac exit 0"); };
-    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
+    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed; FAIL demo.CartTest.x"); };
+    const std::string dir = make_project(kGood);
+    s.project_dir = [dir] { return dir; };
     s.fixer = [](const app::fixer::FailureContext&) -> app::fixer::Proposal {
         throw std::runtime_error("no fix");
     };
     const Snapshot snap = run_sync(kGood, s);
+    std::filesystem::remove_all(dir);
 
     CHECK(row(snap, "debug").status == NodeStatus::skipped);
     CHECK(row(snap, "debug").summary == "no proposal: no fix");
@@ -429,6 +472,7 @@ int main(int argc, char** argv) {
     test_architect_failure_routes_to_report();
     test_fake_fixer_records_rationale_and_routes_to_report();
     test_unset_fixer_records_skipped_without_proposal();
+    test_fixer_skipped_without_failing_class();
     test_fixer_that_throws_routes_to_report();
     test_panel_rows_match_graph_nodes();
     if (argc > 1) test_real_singleton(argv[1]);

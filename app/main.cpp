@@ -19,6 +19,11 @@
 #include "project_panel.hpp"
 #include "java_tools.hpp"
 #include "task_trace.hpp"
+#include "llm.hpp"
+#include "llm_fixer.hpp"
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
 #include <stdexcept>
 #include "trace_panel.hpp"
 #include "verify.hpp"
@@ -100,8 +105,25 @@ int main(int argc, char** argv) {
         if (dir.empty()) throw std::runtime_error("open a project folder first");
         return app::architect::outline_project(dir);
     };
-    // no model provider configured: trace.services.fixer stays unset, so the debug step
-    // records skipped and the run goes to report.
+    trace.services.project_dir = [&project]() -> std::string {
+        return project.tree.root().path.string();
+    };
+    // Local model for the debug step. WB_MODEL=/path/to/model.gguf turns on the fixer; without it
+    // the debug step records skipped and the run goes to report.
+    std::shared_ptr<wb::llm::Model> model;
+    if (const char* model_path = std::getenv("WB_MODEL"); model_path && *model_path) {
+        wb::llm::Options llm_opt;
+        llm_opt.n_ctx = 6144;
+        llm_opt.max_new_tokens = 2048;
+        std::string llm_error;
+        model = wb::llm::Model::load(model_path, llm_opt, &llm_error);
+        if (model) {
+            trace.services.fixer = app::fixer::make_llm_fixer(model);
+            std::fprintf(stderr, "fixer: local model loaded (%s)\n", model_path);
+        } else {
+            std::fprintf(stderr, "fixer: model not loaded: %s\n", llm_error.c_str());
+        }
+    }
     bool show_trace = false;
     project.open_folder();
 

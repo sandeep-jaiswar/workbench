@@ -44,7 +44,13 @@ GLFW is built with the X11 backend only. For Wayland, install `wayland-scanner` 
 
 - Done: builds against the pinned java-wasm core; starts and runs under Xvfb.
 - Not yet tested: clicking the buttons in the window.
-- Not included: model weights and the llama.cpp sampler (planned; see java-wasm README).
+- Done: debug step can use a local model. Set `WB_MODEL=/path/to/model.gguf` before starting; the
+  fixer then proposes a whole-file fix for the failing class, which still goes through the staged
+  check and the confirmed apply.
+- Tested end to end (headless): a broken `Cart.java` in a copy of the sample was found by javac and
+  the tests, and the local 1.5B model (Qwen2.5-Coder-1.5B Q4_K_M, CPU) returned a reply. It did not
+  fix the bug on a single attempt, so the apply step is not reached with the 1.5B model yet.
+- Not included: model weights. Download one separately (Apache 2.0 recommended).
 
 ## License
 

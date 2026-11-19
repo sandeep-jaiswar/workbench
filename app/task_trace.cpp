@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -141,9 +144,6 @@ Services make_services(const wb::Catalog& catalog) {
 
 Graph build_graph(std::string document_text, Services services, std::shared_ptr<TaskBoard> board) {
     Graph g;
-    // The debug step hands the fixer the text under test; the analyze step moves its copy.
-    const std::string source_text = document_text;
-
     g.add_node("analyze", guarded("analyze",
         [doc = std::move(document_text)](const State&, Trace& t, Patch& p) {
             wb::Session session;
@@ -210,14 +210,43 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
         }, board));
 
     g.add_node("debug", guarded("debug",
-        [fixer = services.fixer, source = source_text, board](const State& s, Trace& t, Patch& p) {
+        [fixer = services.fixer, project_dir = services.project_dir, board](
+            const State& s, Trace& t, Patch& p) {
             if (!fixer) return Outcome{NodeStatus::skipped, "not wired (no fixer)"};
             const int attempt = integer(s, "attempts") + 1;
             p["attempts"] = attempt;
             app::fixer::FailureContext ctx;
-            ctx.class_source = source;
-            ctx.test_output = text(s, "reason");
             ctx.attempt = attempt;
+            ctx.test_output = text(s, "reason");
+            ctx.project_dir = project_dir ? project_dir() : std::string();
+            // The failing class is read from disk: a proposal is a whole-file replacement of it.
+            ctx.class_path = app::fixer::class_path_for_failure(ctx.project_dir, ctx.test_output);
+            if (ctx.class_path.empty()) {
+                p["debug_fixed"] = false;
+                return Outcome{NodeStatus::skipped, "no failing class found in the project"};
+            }
+            {
+                std::ifstream in(std::filesystem::path(ctx.project_dir) / ctx.class_path,
+                                 std::ios::binary);
+                if (!in) {
+                    p["debug_fixed"] = false;
+                    return Outcome{NodeStatus::skipped, "cannot read " + ctx.class_path};
+                }
+                std::ostringstream buf;
+                buf << in.rdbuf();
+                ctx.class_source = buf.str();
+            }
+            // The failing test, when the project has one by convention, is the spec for the fix.
+            {
+                std::ifstream in(std::filesystem::path(ctx.project_dir) /
+                                     app::fixer::test_path_for(ctx.class_path),
+                                 std::ios::binary);
+                if (in) {
+                    std::ostringstream buf;
+                    buf << in.rdbuf();
+                    ctx.test_source = buf.str();
+                }
+            }
             app::fixer::Proposal proposal;
             try {
                 proposal = fixer(ctx);

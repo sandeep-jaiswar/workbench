@@ -14,6 +14,7 @@ struct FailureContext {
     std::string class_path;    // project-relative, e.g. "src/demo/Cart.java"; may be empty
     std::string class_source;  // text the proposal will be made against
     std::string test_output;   // failure report, e.g. "1 passed, 1 failed; FAIL demo.CartTest.x"
+    std::string test_source;   // the failing test class, when it exists; may be empty
     int attempt = 0;
 };
 
@@ -33,5 +34,8 @@ using Fixer = std::function<Proposal(const FailureContext&)>;
 // "src/<pkg path>/<Name>.java". Returns that project-relative path when the file exists
 // under `project_dir`, and an empty string otherwise.
 std::string class_path_for_failure(const std::string& project_dir, const std::string& test_output);
+
+// "src/<pkg>/<Name>.java" -> "test/<pkg>/<Name>Test.java" (the test class by convention).
+std::string test_path_for(const std::string& class_path);
 
 }  // namespace app::fixer

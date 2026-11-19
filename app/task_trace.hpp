@@ -44,10 +44,11 @@ struct Services {
     std::function<std::string()> test;
     // Project outline for the architect step. Unset records architect as skipped.
     std::function<app::architect::Outline()> architect;
+    // Project folder. Debug uses it to find the failing class on disk. Unset: debug skipped.
+    std::function<std::string()> project_dir;
     // Optional fixer. Receives the failure context and returns a proposal, or throws when it
     // has none. Unset: debug records skipped. The proposal is only shown; nothing is applied
-    // by the graph. Callers fill FailureContext::project_dir and class_path.
-    // main.cpp leaves this unset: no model provider configured.
+    // by the graph. The debug node fills project_dir, class_path and class_source (from disk).
     app::fixer::Fixer fixer;
 };
 

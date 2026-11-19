@@ -63,4 +63,12 @@ std::string class_path_for_failure(const std::string& project_dir, const std::st
     return rel.generic_string();
 }
 
+std::string test_path_for(const std::string& class_path) {
+    const std::string src = "src/";
+    if (class_path.compare(0, src.size(), src) != 0 || class_path.size() < 6) return {};
+    const std::string rest = class_path.substr(src.size());
+    if (rest.size() < 5 || rest.compare(rest.size() - 5, 5, ".java") != 0) return {};
+    return "test/" + rest.substr(0, rest.size() - 5) + "Test.java";
+}
+
 }  // namespace app::fixer
