@@ -49,10 +49,11 @@ struct Services {
 // Services that generate with the Singleton pattern from `catalog`. Compile and test are unset.
 Services make_services(const wb::Catalog& catalog);
 
-// The graph: analyze -> architect -> generate -> check -> compile -> test -> END. A failed
-// test goes to debug, which either sends the run back to test (bounded by kMaxFixAttempts,
-// state key "attempts") or to report. Other failures go to report -> END. Node rows are
-// written to `board`. The state passed to run() must contain "class_name" (string).
+// The graph: analyze -> architect -> generate -> check -> compile -> test -> report -> END.
+// A failed test goes to debug, which either sends the run back to test (bounded by
+// kMaxFixAttempts, state key "attempts") or to report. Other failures go to report -> END, so
+// every run ends at report. Node rows are written to `board`. The state passed to run() must
+// contain "class_name" (string).
 wb::graph::Graph build_graph(std::string document_text, Services services,
                              std::shared_ptr<TaskBoard> board);
 

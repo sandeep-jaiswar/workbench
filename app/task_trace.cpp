@@ -198,8 +198,13 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
         board));
 
     g.add_node("test", guarded("test",
-        [hook = services.test](const State&, Trace&, Patch&) { return run_hook(hook); },
-        board));
+        [hook = services.test](const State&, Trace&, Patch& p) {
+            Outcome out = run_hook(hook);  // a throwing hook fails the node and skips this line
+            // A passing run clears the reason a failed attempt left behind, so report
+            // does not say "stopped at test" after a successful fix.
+            p["reason"] = std::string();
+            return out;
+        }, board));
 
     g.add_node("debug", guarded("debug",
         [fixer = services.fixer](const State& s, Trace& t, Patch& p) {
@@ -245,9 +250,9 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
     g.add_conditional_edge("compile", [](const State& s) {
         return flag(s, "compile_ok") ? std::string("test") : std::string("report");
     });
-    // A passing test (or a skipped one) ends the run. A failing test goes to debug.
+    // A passing test (or a skipped one) goes to report. A failing test goes to debug.
     g.add_conditional_edge("test", [](const State& s) {
-        return flag(s, "test_ok") ? std::string(wb::graph::kEnd) : std::string("debug");
+        return flag(s, "test_ok") ? std::string("report") : std::string("debug");
     });
     // A fix that was applied goes back to test while attempts remain; anything else reports.
     g.add_conditional_edge("debug", [](const State& s) {

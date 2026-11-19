@@ -122,10 +122,12 @@ void test_happy_path() {
     CHECK(row(snap, "test").status == NodeStatus::ok);
     CHECK(row(snap, "architect").status == NodeStatus::skipped);
     CHECK(row(snap, "debug").status == NodeStatus::pending);
-    CHECK(row(snap, "report").status == NodeStatus::pending);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "compile", "test"}));
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(row(snap, "report").summary == "all steps passed");
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile", "test", "report"}));
+    CHECK(has_edge(snap, "-> report"));
     CHECK(has_edge(snap, "-> END"));
-    CHECK(!has_edge(snap, "-> report"));
     CHECK(!has_edge(snap, "-> debug"));
 }
 
@@ -149,8 +151,9 @@ void test_unwired_hooks_are_skipped() {
     CHECK(snap.outcome == "ok");
     CHECK(row(snap, "compile").status == NodeStatus::skipped);
     CHECK(row(snap, "test").status == NodeStatus::skipped);
-    CHECK(row(snap, "report").status == NodeStatus::pending);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "compile", "test"}));
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile", "test", "report"}));
 }
 
 void test_generate_failure_routes_to_report() {
@@ -357,7 +360,13 @@ void test_fixer_that_fixes_ends_the_run() {
 
     CHECK(test_runs == 2);
     CHECK(row(snap, "test").status == NodeStatus::ok);
-    CHECK(row(snap, "report").status == NodeStatus::pending);
+    CHECK(row(snap, "debug").status == NodeStatus::ok);
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    // The fix cleared the failed attempt's reason, so the run reads as passed.
+    CHECK(row(snap, "report").summary == "all steps passed; fix attempts 1");
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile",
+              "test", "debug", "test", "report"}));
     CHECK(has_edge(snap, "-> END"));
 }
 

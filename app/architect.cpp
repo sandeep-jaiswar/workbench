@@ -13,7 +13,6 @@
 namespace fs = std::filesystem;
 
 namespace app::architect {
-namespace {
 
 // The first "package x.y;" line, or empty. Good enough for a summary: comments are not parsed.
 std::string package_name(const std::string& text) {
@@ -36,6 +35,8 @@ std::string package_name(const std::string& text) {
     }
     return {};
 }
+
+namespace {
 
 std::string type_kind(wb::SymbolKind kind) {
     switch (kind) {

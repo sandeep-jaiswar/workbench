@@ -48,6 +48,9 @@ struct Source {
     std::string text;
 };
 
+// The first "package x.y;" line of a Java source, or empty for the default package.
+std::string package_name(const std::string& text);
+
 // Pure: parses each source and builds the outline. Sources past kMaxFiles are not read.
 Outline outline_sources(const std::vector<Source>& sources);
 

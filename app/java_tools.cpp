@@ -264,14 +264,28 @@ RunResult run_tests(const std::string& project_dir, const std::string& main_clas
 
 std::vector<Diagnostic> parse_javac_output(const std::string& output) {
     static const std::string kMarker = ": error: ";
-    std::vector<Diagnostic> found;
+
+    std::vector<std::string> lines;
     std::size_t start = 0;
     while (start < output.size()) {
         std::size_t end = output.find('\n', start);
         if (end == std::string::npos) end = output.size();
-        const std::string line = output.substr(start, end - start);
+        lines.push_back(output.substr(start, end - start));
         start = end + 1;
+    }
 
+    // javac prints "<error>", then the source line, then a caret line: spaces or tabs, one
+    // '^', and nothing else. Returns the 1-based column of that '^', or 0 for any other line.
+    auto caret_column = [](const std::string& line) -> int {
+        std::size_t i = line.find_first_not_of(" \t");
+        if (i == std::string::npos || line[i] != '^') return 0;
+        if (line.find_first_not_of(" \t\r", i + 1) != std::string::npos) return 0;
+        return static_cast<int>(i) + 1;
+    };
+
+    std::vector<Diagnostic> found;
+    for (std::size_t n = 0; n < lines.size(); ++n) {
+        const std::string& line = lines[n];
         const std::size_t at = line.find(kMarker);
         if (at == std::string::npos) continue;
         const std::string head = line.substr(0, at);  // "<path>:<line>"
@@ -288,6 +302,15 @@ std::vector<Diagnostic> parse_javac_output(const std::string& output) {
         d.file = head.substr(0, colon);
         d.line = std::atoi(head.c_str() + colon + 1);
         d.message = line.substr(at + kMarker.size());
+        // The caret line comes after the source line, so it is the second line here. A
+        // diagnostic with no source line has its caret right after the error line.
+        for (std::size_t k = n + 1; k <= n + 2 && k < lines.size(); ++k) {
+            const int col = caret_column(lines[k]);
+            if (col > 0) {
+                d.column = col;
+                break;
+            }
+        }
         found.push_back(std::move(d));
     }
     return found;

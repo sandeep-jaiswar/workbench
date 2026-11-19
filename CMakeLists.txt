@@ -12,7 +12,7 @@ include(FetchContent)
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        4fb0307608a0e43424afffb9975551006e5ce799)
+    GIT_TAG        01314725dc0cbb227113559f9285ca4acf90da7b)
 FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
@@ -63,6 +63,7 @@ add_executable(workbench
     app/project.cpp
     app/project_panel.cpp
     app/task_trace.cpp
+    app/test_gen.cpp
     app/trace_panel.cpp)
 target_include_directories(workbench PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 find_package(Threads REQUIRED)
@@ -88,3 +89,9 @@ add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp ap
 target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
 add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)
+
+# "Tests for missing classes": headless, wb_core only.
+add_executable(test_gen_test tests/test_gen_test.cpp app/test_gen.cpp app/architect.cpp)
+target_include_directories(test_gen_test PRIVATE app)
+target_link_libraries(test_gen_test PRIVATE wb_core)
+add_test(NAME test_gen COMMAND test_gen_test)

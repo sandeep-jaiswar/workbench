@@ -12,10 +12,12 @@ struct RunResult {
     std::string output;       // stdout and stderr combined, capped at 64 KiB
 };
 
-// One javac error: "<file>:<line>: error: <message>".
+// One javac error: "<file>:<line>: error: <message>". javac then prints the source line and a
+// caret line; `column` is the 1-based index of the '^' in that caret line (1 when there is none).
 struct Diagnostic {
     std::string file;
     int line = 0;
+    int column = 1;
     std::string message;
 };
 
@@ -28,7 +30,8 @@ RunResult compile_project(const std::string& project_dir);
 // java -cp out/classes:out/test-classes <main_class> in <project>.
 RunResult run_tests(const std::string& project_dir, const std::string& main_class);
 
-// Extracts the javac error lines from captured output. Other lines are ignored.
+// Extracts the javac error lines from captured output, with the column from the caret line that
+// follows each one. Other lines are ignored.
 std::vector<Diagnostic> parse_javac_output(const std::string& output);
 
 // Result lines of the sample test runner: "PASS <name>", "FAIL <name>: <message>" and a final

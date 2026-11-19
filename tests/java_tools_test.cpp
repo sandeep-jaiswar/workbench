@@ -58,6 +58,57 @@ void test_parse_javac() {
     }
 }
 
+// Real javac 25 output (--release 17) for a scratch file with two errors on line 6, the
+// "return x" line that follows "int x = a +" (missing ';' and an illegal start of expression).
+void test_parse_javac_caret_column() {
+    const std::string out =
+        "src/demo/Broken.java:6: error: illegal start of expression\n"
+        "        return x\n"
+        "        ^\n"
+        "src/demo/Broken.java:6: error: ';' expected\n"
+        "        return x\n"
+        "                ^\n"
+        "2 errors\n";
+    const std::vector<wbx::Diagnostic> d = wbx::parse_javac_output(out);
+    CHECK(d.size() == 2);
+    if (d.size() == 2) {
+        CHECK(d[0].line == 6);
+        CHECK(d[0].column == 9);  // '^' at index 8: eight spaces, under "return"
+        CHECK(d[0].message == "illegal start of expression");
+        CHECK(d[1].line == 6);
+        CHECK(d[1].column == 17);  // '^' at index 16: sixteen spaces, under the ';' position
+        CHECK(d[1].message == "';' expected");
+    }
+}
+
+void test_parse_javac_caret_tabs_and_missing_caret() {
+    // Tabs in the source line are kept in the caret line, so the index still counts characters.
+    const std::string tabbed =
+        "/w/A.java:3: error: not a statement\n"
+        "\tint y = 2 3;\n"
+        "\t\t    ^\n";
+    const std::vector<wbx::Diagnostic> t = wbx::parse_javac_output(tabbed);
+    CHECK(t.size() == 1);
+    if (t.size() == 1) CHECK(t[0].column == 7);  // two tabs and four spaces: '^' at index 6
+
+    // No caret line (javac without a source line, or a line that is not a caret): column 1.
+    const std::string bare =
+        "/w/B.java:9: error: class, interface, enum, or record expected\n"
+        "1 error\n";
+    const std::vector<wbx::Diagnostic> b = wbx::parse_javac_output(bare);
+    CHECK(b.size() == 1);
+    if (b.size() == 1) CHECK(b[0].column == 1);
+
+    // A source line that contains '^' is not a caret line: it has code before the '^'.
+    const std::string operator_line =
+        "/w/C.java:2: error: bad operand\n"
+        "    x = a ^ b;\n"
+        "          ^\n";
+    const std::vector<wbx::Diagnostic> c = wbx::parse_javac_output(operator_line);
+    CHECK(c.size() == 1);
+    if (c.size() == 1) CHECK(c[0].column == 11);
+}
+
 }  // namespace
 
 int main() {
@@ -65,6 +116,8 @@ int main() {
     test_timeout();
     test_missing_binary();
     test_parse_javac();
+    test_parse_javac_caret_column();
+    test_parse_javac_caret_tabs_and_missing_caret();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

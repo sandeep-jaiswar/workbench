@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "imgui.h"
+#include "test_gen.hpp"
 
 namespace fs = std::filesystem;
 
@@ -57,6 +58,16 @@ void draw_build_tab(JavaRun& run, Editor& editor, const fs::path& root) {
     if (ImGui::Button("Test")) {
         run.start("Test", [root_str] { return wbx::run_tests(root_str, "demo.TestRunner"); });
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Tests for missing classes")) {
+        run.start("Tests for missing classes", [root_str] {
+            const app::test_gen::Report report = app::test_gen::generate_missing_tests(root_str);
+            wbx::RunResult result;
+            result.exit_code = report.failed ? 1 : 0;
+            result.output = app::test_gen::format_report(report, root_str);
+            return result;
+        });
+    }
     ImGui::EndDisabled();
 
     if (root.empty()) {
@@ -94,10 +105,11 @@ void draw_build_tab(JavaRun& run, Editor& editor, const fs::path& root) {
                 // paths are resolved against the project root.
                 fs::path file = d.file;
                 if (file.is_relative()) file = root / file;
-                // javac reports only the line, so the caret goes to column 1 of that line.
+                // The caret goes to the column javac marked with '^' (1 when it printed none).
                 std::string error;
                 const std::size_t line = d.line > 0 ? static_cast<std::size_t>(d.line) : 1;
-                run.open_error = editor.goto_line(file, line, 1, error) ? std::string() : error;
+                const std::size_t column = d.column > 0 ? static_cast<std::size_t>(d.column) : 1;
+                run.open_error = editor.goto_line(file, line, column, error) ? std::string() : error;
             }
             ImGui::PopID();
         }
