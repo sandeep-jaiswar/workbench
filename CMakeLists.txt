@@ -49,8 +49,24 @@ target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
 
 # ---- desktop app ------------------------------------------------------------
-add_executable(workbench app/main.cpp)
+add_executable(workbench
+    app/main.cpp
+    app/app_window.cpp
+    app/document.cpp
+    app/editor.cpp
+    app/generate_panel.cpp
+    app/output.cpp
+    app/project.cpp
+    app/project_panel.cpp)
+target_include_directories(workbench PRIVATE app)
 target_link_libraries(workbench PRIVATE wb_core imgui)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
     WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json")
+
+# ---- tests ------------------------------------------------------------------
+# Headless: Document only, no ImGui, GLFW or display.
+enable_testing()
+add_executable(document_test tests/document_test.cpp app/document.cpp)
+target_include_directories(document_test PRIVATE app)
+add_test(NAME document_test COMMAND document_test)
