@@ -332,6 +332,7 @@ std::string make_project(const std::string& source) {
          "_" + std::to_string(counter++));
     fs::create_directories(dir / "src" / "demo");
     std::ofstream(dir / "src" / "demo" / "Cart.java") << source;
+    std::ofstream(dir / "src" / "demo" / "Demo.java") << source;
     return dir.string();
 }
 
@@ -353,8 +354,7 @@ void test_fake_fixer_records_rationale_and_routes_to_report() {
         ++fixer_calls;
         seen = ctx;
         app::fixer::Proposal p;
-        p.class_path = "src/demo/Demo.java";
-        p.new_source = "public class Demo {}\n";
+        p.edits.push_back({"src/demo/Demo.java", "public class Demo {}\n", ""});
         p.rationale = "round half up\nin FlatTax";
         return p;
     };
@@ -379,8 +379,8 @@ void test_fake_fixer_records_rationale_and_routes_to_report() {
     CHECK(has_edge(snap, "-> report"));
     CHECK(has_edge(snap, "-> debug"));
     CHECK(snap.proposal.has_value());
-    CHECK(snap.proposal->class_path == "src/demo/Demo.java");
-    CHECK(snap.proposal->base_source == kGood);
+    CHECK(snap.proposal->edits[0].class_path == "src/demo/Demo.java");
+    CHECK(snap.proposal->edits[0].base_source == kGood);
 }
 
 // A rejected proposal goes back to the fixer with its reason, and the next green one is kept.
@@ -394,13 +394,12 @@ void test_retry_until_a_proposal_is_green() {
     s.fixer = [&](const app::fixer::FailureContext& ctx) {
         feedback_seen.push_back(ctx.feedback);
         app::fixer::Proposal p;
-        p.class_path = "src/demo/Cart.java";
-        p.new_source = feedback_seen.size() == 1 ? "bad\n" : "good\n";
+        p.edits.push_back({"src/demo/Cart.java", feedback_seen.size() == 1 ? "bad\n" : "good\n", ""});
         p.rationale = "try " + std::to_string(feedback_seen.size());
         return p;
     };
     s.check_proposal = [](const app::fixer::Proposal& p) -> std::string {
-        return p.new_source == "good\n" ? std::string() : std::string("javac failed:\nbad token");
+        return p.edits[0].new_source == "good\n" ? std::string() : std::string("javac failed:\nbad token");
     };
     const Snapshot snap = run_sync(kGood, s);
     std::filesystem::remove_all(dir);
@@ -410,7 +409,7 @@ void test_retry_until_a_proposal_is_green() {
     CHECK(feedback_seen.size() == 2 && feedback_seen[1].find("bad token") != std::string::npos);
     CHECK(row(snap, "debug").status == NodeStatus::ok);
     CHECK(row(snap, "debug").summary == "attempt 2: try 2");
-    CHECK(snap.proposal.has_value() && snap.proposal->new_source == "good\n");
+    CHECK(snap.proposal.has_value() && snap.proposal->edits[0].new_source == "good\n");
     CHECK(row(snap, "report").status == NodeStatus::ok);
 }
 
@@ -426,8 +425,7 @@ void test_retry_gives_up_after_max_attempts() {
     s.fixer = [&](const app::fixer::FailureContext&) {
         ++calls;
         app::fixer::Proposal p;
-        p.class_path = "src/demo/Cart.java";
-        p.new_source = "still bad\n";
+        p.edits.push_back({"src/demo/Cart.java", "still bad\n", ""});
         return p;
     };
     s.check_proposal = [](const app::fixer::Proposal&) -> std::string { return "tests failed"; };
@@ -502,8 +500,7 @@ void test_panel_rows_match_graph_nodes() {
     s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
     s.fixer = [](const app::fixer::FailureContext&) {
         app::fixer::Proposal p;
-        p.class_path = "src/demo/Demo.java";
-        p.rationale = "no-op";
+        p.rationale = "no-op";  // no edits: the debug step rejects it
         return p;
     };
     const Snapshot snap = run_sync(kGood, s);

@@ -77,10 +77,8 @@ struct Project {
 
 fixer::Proposal proposal(const std::string& new_source) {
     fixer::Proposal p;
-    p.class_path = "src/demo/Calc.java";
-    p.new_source = new_source;
+    p.edits.push_back({"src/demo/Calc.java", new_source, kCalcOld});
     p.rationale = "return 42";
-    p.base_source = kCalcOld;
     return p;
 }
 
@@ -192,7 +190,7 @@ void test_apply_refused_on_conflict() {
     const apply_fix::StageResult r = apply_fix::stage(p.dir(), prop, "demo.Runner");
     CHECK(r.green());
     // The proposal was made against other text than the file on disk.
-    prop.base_source = "package demo;\n// edited elsewhere\n";
+    prop.edits[0].base_source = "package demo;\n// edited elsewhere\n";
     const apply_fix::ApplyResult a = apply_fix::apply(p.dir(), prop, r, true);
     CHECK(!a.written);
     CHECK(a.conflict);
@@ -222,6 +220,35 @@ void test_apply_writes_backup_and_new_file() {
 
 }  // namespace
 
+// A two-file proposal: when the second file changed on disk, nothing is written, not even the
+// first file. When both match, both are written and both have backups.
+void test_apply_multi_file_is_all_or_nothing() {
+    Project p;
+    write_file(p.root / "src/demo/Other.java", "package demo;\nclass Other {}\n");
+    fixer::Proposal prop = proposal(kCalcFixed);
+    prop.edits.push_back({"src/demo/Other.java", "package demo;\nclass Other { int x; }\n",
+                          "package demo;\nclass Other {}\n"});
+    apply_fix::StageResult green;
+    green.compiled = true;
+    green.tested = true;
+
+    // The second file was edited elsewhere after the proposal was made.
+    write_file(p.root / "src/demo/Other.java", "package demo;\n// changed\nclass Other {}\n");
+    const apply_fix::ApplyResult refused = apply_fix::apply(p.dir(), prop, green, true);
+    CHECK(!refused.written);
+    CHECK(refused.conflict);
+    CHECK(read_file(p.calc()) == kCalcOld);
+
+    // Matching text on both files: both are written, and each has a backup.
+    write_file(p.root / "src/demo/Other.java", "package demo;\nclass Other {}\n");
+    const apply_fix::ApplyResult ok = apply_fix::apply(p.dir(), prop, green, true);
+    CHECK(ok.written);
+    CHECK(ok.written_paths.size() == 2);
+    CHECK(ok.backups.size() == 2);
+    CHECK(read_file(p.calc()) == kCalcFixed);
+    CHECK(read_file(p.root / "src/demo/Other.java") == "package demo;\nclass Other { int x; }\n");
+}
+
 int main() {
     test_diff_exact_hunk();
     test_diff_deletion_and_missing_newline();
@@ -234,6 +261,7 @@ int main() {
     test_apply_refused_when_tests_fail();
     test_apply_refused_on_conflict();
     test_apply_writes_backup_and_new_file();
+    test_apply_multi_file_is_all_or_nothing();
 
     if (failures == 0) std::printf("apply_fix_test: all checks passed\n");
     return failures == 0 ? 0 : 1;

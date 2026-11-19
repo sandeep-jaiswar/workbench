@@ -13,8 +13,11 @@ set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 set(WB_LLM ON CACHE BOOL "" FORCE)           # native local model (llama.cpp) for the fixer
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        5f9caa6ede41a05fffef60c9341c745927df8a18)
+    GIT_TAG        f5dbfe5758f73976117c51d899fd52fa3d406fd4)
 FetchContent_MakeAvailable(java_wasm)
+
+# Where the default local model lives. Install it with java-wasm's scripts/fetch-model.sh <dir>.
+set(WB_MODEL_DIR "${CMAKE_SOURCE_DIR}/models" CACHE PATH "Directory holding the default GGUF model")
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
 find_package(OpenGL REQUIRED)
@@ -75,7 +78,8 @@ find_package(Threads REQUIRED)
 target_link_libraries(workbench PRIVATE wb_core wb_llm imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
-    WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json")
+    WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json"
+    WB_DEFAULT_MODEL="${WB_MODEL_DIR}/qwen2.5-coder-7b-instruct-q4_k_m.gguf")
 
 # ---- tests ------------------------------------------------------------------
 # Headless: Document only, no ImGui, GLFW or display.

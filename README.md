@@ -44,15 +44,16 @@ GLFW is built with the X11 backend only. For Wayland, install `wayland-scanner` 
 
 - Done: builds against the pinned java-wasm core; starts and runs under Xvfb.
 - Not yet tested: clicking the buttons in the window.
-- Done: debug step can use a local model. Set `WB_MODEL=/path/to/model.gguf` before starting; the
-  fixer then proposes a whole-file fix for the failing class, which still goes through the staged
-  check and the confirmed apply.
-- Each proposal is staged (javac and tests on a copy) before the debug step accepts it. A rejected
-  proposal goes back to the model with the reason and the failing assertions, up to 3 attempts.
-- Tested end to end (headless): a broken `Cart.java` in a copy of the sample was found by javac and
-  the tests. The local 1.5B model (Qwen2.5-Coder-1.5B Q4_K_M, CPU) returned the file unchanged on all
-  three attempts, so no proposal reached apply. The retry path itself is covered by unit tests.
-- Not included: model weights. Download one separately (Apache 2.0 recommended).
+- Done: the debug step uses a local model. The default is Qwen2.5-Coder-7B-Instruct (Apache 2.0).
+  Fetch it with `scripts/fetch-model.sh <dir>` from java-wasm, then build with
+  `-DWB_MODEL_DIR=<dir>`, or set `WB_MODEL=/path/to/model.gguf` at run time. With no model file the
+  debug step is skipped.
+- A proposal can change several project files. Each file's edit is checked against its text on
+  disk. The whole set is staged (javac and tests on a copy) and applied only as one unit, after the
+  user confirms. A conflict in any file writes nothing.
+- Each proposal is staged before the debug step accepts it. A rejected proposal goes back to the
+  model with the reason and the failing assertions, up to 3 attempts.
+- Not included: model weights (fetched separately, see above).
 
 ## License
 

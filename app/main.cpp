@@ -141,21 +141,27 @@ int main(int argc, char** argv) {
     trace.services.project_dir = [&project]() -> std::string {
         return project.tree.root().path.string();
     };
-    // Local model for the debug step. WB_MODEL=/path/to/model.gguf turns on the fixer; without it
-    // the debug step records skipped and the run goes to report.
+    // Local model for the debug step. WB_MODEL=/path/to/model.gguf overrides the default model,
+    // which scripts/fetch-model.sh installs. With no model file the debug step is skipped.
     std::shared_ptr<wb::llm::Model> model;
-    if (const char* model_path = std::getenv("WB_MODEL"); model_path && *model_path) {
+    const char* env_model = std::getenv("WB_MODEL");
+    const std::string model_path = (env_model && *env_model) ? env_model : WB_DEFAULT_MODEL;
+    if (std::FILE* f = std::fopen(model_path.c_str(), "rb")) {
+        std::fclose(f);
         wb::llm::Options llm_opt;
-        llm_opt.n_ctx = 6144;
+        llm_opt.n_ctx = 8192;
         llm_opt.max_new_tokens = 2048;
         std::string llm_error;
         model = wb::llm::Model::load(model_path, llm_opt, &llm_error);
         if (model) {
             trace.services.fixer = app::fixer::make_llm_fixer(model);
-            std::fprintf(stderr, "fixer: local model loaded (%s)\n", model_path);
+            std::fprintf(stderr, "fixer: local model loaded (%s)\n", model_path.c_str());
         } else {
             std::fprintf(stderr, "fixer: model not loaded: %s\n", llm_error.c_str());
         }
+    } else {
+        std::fprintf(stderr, "fixer: no model at %s; debug step skipped (see README)\n",
+                     model_path.c_str());
     }
     bool show_trace = false;
     project.open_folder();

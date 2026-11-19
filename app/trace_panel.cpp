@@ -78,17 +78,20 @@ void open_review(TracePanel& panel, const std::string& project_dir) {
     review.staged.reset();
     review.message.clear();
 
-    std::string current;
-    std::ifstream in(std::filesystem::path(project_dir) / review.proposal.class_path, std::ios::binary);
-    if (in) {
-        std::ostringstream buf;
-        buf << in.rdbuf();
-        current = buf.str();
-    } else {
-        review.message = "cannot read " + review.proposal.class_path + " for the diff";
+    // One diff per edited file, each against the file on disk.
+    review.diff.clear();
+    for (const fixer::FileEdit& e : review.proposal.edits) {
+        std::string current;
+        std::ifstream in(std::filesystem::path(project_dir) / e.class_path, std::ios::binary);
+        if (in) {
+            std::ostringstream buf;
+            buf << in.rdbuf();
+            current = buf.str();
+        } else {
+            review.message = "cannot read " + e.class_path + " for the diff";
+        }
+        review.diff += apply_fix::unified_diff(current, e.new_source, e.class_path);
     }
-    review.diff = apply_fix::unified_diff(current, review.proposal.new_source,
-                                          review.proposal.class_path);
 
     review.staging = true;
     const fixer::Proposal proposal = review.proposal;
@@ -131,7 +134,10 @@ void draw_review(TracePanel& panel, const std::string& project_dir) {
     FixReview& review = panel.review;
     poll_review(review);
     ImGui::Separator();
-    ImGui::Text("Proposed fix: %s", review.proposal.class_path.c_str());
+    std::string files;
+    for (const fixer::FileEdit& e : review.proposal.edits) files += (files.empty() ? "" : ", ") + e.class_path;
+    ImGui::Text("Proposed fix (%zu file%s): %s", review.proposal.edits.size(),
+                review.proposal.edits.size() == 1 ? "" : "s", files.c_str());
     ImGui::TextWrapped("%s", review.proposal.rationale.c_str());
     draw_diff(review.diff);
 
@@ -161,7 +167,8 @@ void draw_review(TracePanel& panel, const std::string& project_dir) {
         const apply_fix::ApplyResult r =
             apply_fix::apply(project_dir, review.proposal, *review.staged, true);
         if (r.written) {
-            review.message = "Applied. Backup: " + r.backup_path;
+            review.message = "Applied " + std::to_string(r.written_paths.size()) +
+                             " file(s). Backups in out/backups/";
             review.staged.reset();  // a second apply needs a fresh staging run
         } else {
             review.message = r.error;

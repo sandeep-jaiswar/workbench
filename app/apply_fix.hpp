@@ -7,6 +7,7 @@
 //            staged build and tests passed AND the file still matches the proposal's base.
 
 #include <string>
+#include <vector>
 
 #include "fixer.hpp"
 
@@ -35,7 +36,9 @@ StageResult stage(const std::string& project_dir, const fixer::Proposal& proposa
                   const std::string& main_class = "demo.TestRunner");
 
 struct ApplyResult {
-    bool written = false;
+    bool written = false;  // true when every edit was written
+    std::vector<std::string> written_paths;  // project-relative paths written so far
+    std::vector<std::string> backups;  // one backup per edited file
     bool conflict = false;   // the file on disk no longer matches proposal.base_source
     std::string backup_path; // set when a backup was written
     std::string error;

@@ -142,6 +142,62 @@ Services make_services(const wb::Catalog& catalog) {
     return s;
 }
 
+namespace {
+
+// Reads a whole file. Returns false when it cannot be opened.
+bool read_file(const std::filesystem::path& path, std::string& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    out = buf.str();
+    return true;
+}
+
+// The project's src/ .java files the fixer may change, within a byte budget. The failing class
+// always comes first. Then come classes whose names appear in the failing test or class, then the
+// rest by path.
+std::vector<app::fixer::SourceFile> choose_files(const std::string& project_dir,
+                                                 const std::string& class_path,
+                                                 const std::string& class_source,
+                                                 const std::string& test_source) {
+    namespace fs = std::filesystem;
+    constexpr std::size_t kBudget = 12000;  // about 3000 tokens of source
+    std::vector<app::fixer::SourceFile> all;
+    std::error_code ec;
+    const fs::path src = fs::path(project_dir) / "src";
+    if (!fs::is_directory(src, ec)) return all;
+    for (auto it = fs::recursive_directory_iterator(src, ec); !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().extension() != ".java") continue;
+        app::fixer::SourceFile f;
+        f.path = fs::relative(it->path(), project_dir, ec).generic_string();
+        if (!read_file(it->path(), f.text)) continue;
+        all.push_back(std::move(f));
+    }
+    auto referenced = [&](const app::fixer::SourceFile& f) {
+        const std::string stem = fs::path(f.path).stem().string();
+        return test_source.find(stem) != std::string::npos || class_source.find(stem) != std::string::npos;
+    };
+    std::sort(all.begin(), all.end(), [&](const app::fixer::SourceFile& a, const app::fixer::SourceFile& b) {
+        if (a.path == class_path) return true;
+        if (b.path == class_path) return false;
+        const bool ra = referenced(a), rb = referenced(b);
+        if (ra != rb) return ra;
+        return a.path < b.path;
+    });
+    std::vector<app::fixer::SourceFile> chosen;
+    std::size_t used = 0;
+    for (auto& f : all) {
+        if (!chosen.empty() && used + f.text.size() > kBudget) continue;
+        used += f.text.size();
+        chosen.push_back(std::move(f));
+    }
+    return chosen;
+}
+
+}  // namespace
+
 Graph build_graph(std::string document_text, Services services, std::shared_ptr<TaskBoard> board) {
     Graph g;
     g.add_node("analyze", guarded("analyze",
@@ -218,33 +274,23 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
             app::fixer::FailureContext ctx;
             ctx.test_output = text(s, "reason");
             ctx.project_dir = project_dir ? project_dir() : std::string();
-            // The failing class is read from disk: a proposal is a whole-file replacement of it.
+            // The failing class is read from disk: edits are whole-file replacements of project files.
             ctx.class_path = app::fixer::class_path_for_failure(ctx.project_dir, ctx.test_output);
             if (ctx.class_path.empty()) {
                 p["debug_fixed"] = false;
                 return Outcome{NodeStatus::skipped, "no failing class found in the project"};
             }
-            {
-                std::ifstream in(std::filesystem::path(ctx.project_dir) / ctx.class_path,
-                                 std::ios::binary);
-                if (!in) {
-                    p["debug_fixed"] = false;
-                    return Outcome{NodeStatus::skipped, "cannot read " + ctx.class_path};
-                }
-                std::ostringstream buf;
-                buf << in.rdbuf();
-                ctx.class_source = buf.str();
+            if (!read_file(std::filesystem::path(ctx.project_dir) / ctx.class_path, ctx.class_source)) {
+                p["debug_fixed"] = false;
+                return Outcome{NodeStatus::skipped, "cannot read " + ctx.class_path};
             }
             // The failing test, when the project has one by convention, is the spec for the fix.
-            {
-                std::ifstream in(std::filesystem::path(ctx.project_dir) /
-                                     app::fixer::test_path_for(ctx.class_path),
-                                 std::ios::binary);
-                if (in) {
-                    std::ostringstream buf;
-                    buf << in.rdbuf();
-                    ctx.test_source = buf.str();
-                }
+            read_file(std::filesystem::path(ctx.project_dir) / app::fixer::test_path_for(ctx.class_path),
+                      ctx.test_source);
+            ctx.files = choose_files(ctx.project_dir, ctx.class_path, ctx.class_source, ctx.test_source);
+            if (ctx.files.empty()) {
+                p["debug_fixed"] = false;
+                return Outcome{NodeStatus::skipped, "no project files to change"};
             }
 
             std::string last_reason;
@@ -265,27 +311,37 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
                     p["debug_fixed"] = false;
                     return Outcome{NodeStatus::skipped, "no proposal: unknown exception"};
                 }
-                // The proposal was made against the text the fixer saw; apply() checks it.
-                proposal.base_source = ctx.class_source;
-                if (proposal.new_source == ctx.class_source) {
-                    // Unchanged is a rejection, not an end: the next attempt gets the same report.
-                    last_reason = "your reply made no change; the test report is still:\n" + ctx.test_output;
-                    t.log("attempt " + std::to_string(attempt) + " rejected: no change");
+
+                // Each edit must name a project file, and is made against that file's text.
+                std::string reject;
+                app::fixer::Proposal kept;
+                kept.rationale = proposal.rationale;
+                for (app::fixer::FileEdit e : proposal.edits) {
+                    const app::fixer::SourceFile* base = nullptr;
+                    for (const auto& f : ctx.files) if (f.path == e.class_path) base = &f;
+                    if (!base) { reject = "reply changed a file outside the project files: " + e.class_path; break; }
+                    if (e.new_source == base->text) continue;  // unchanged files are not edits
+                    e.base_source = base->text;
+                    kept.edits.push_back(e);
+                }
+                if (reject.empty() && proposal.edits.empty())
+                    reject = "reply had no usable 'File: <path>' block with a ```java code block";
+                if (reject.empty() && kept.edits.empty())
+                    reject = "your reply made no change; the test report is still:\n" + ctx.test_output;
+                if (reject.empty() && check) reject = check(kept);
+                if (!reject.empty()) {
+                    last_reason = reject;
+                    std::string first = reject.substr(0, reject.find('\n'));
+                    t.log("attempt " + std::to_string(attempt) + " rejected: " + first);
                     continue;
                 }
-                if (check) {
-                    last_reason = check(proposal);
-                    if (!last_reason.empty()) {
-                        std::string first = last_reason.substr(0, last_reason.find('\n'));
-                        t.log("attempt " + std::to_string(attempt) + " rejected: " + first);
-                        continue;
-                    }
-                }
-                std::string rationale = proposal.rationale;
+                std::string rationale = kept.rationale;
                 std::replace(rationale.begin(), rationale.end(), '\n', ' ');
                 p["debug_fixed"] = true;
-                board->set_proposal(proposal);
-                t.log("attempt " + std::to_string(attempt) + ": " + rationale);
+                board->set_proposal(kept);
+                std::string files_changed;
+                for (const auto& e : kept.edits) files_changed += (files_changed.empty() ? "" : ", ") + e.class_path;
+                t.log("attempt " + std::to_string(attempt) + ": " + rationale + " [" + files_changed + "]");
                 return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + rationale};
             }
             p["debug_fixed"] = false;

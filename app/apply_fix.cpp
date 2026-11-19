@@ -246,9 +246,15 @@ std::string unified_diff(const std::string& old_text, const std::string& new_tex
 StageResult stage(const std::string& project_dir, const fixer::Proposal& proposal,
                   const std::string& main_class) {
     StageResult result;
-    if (!valid_class_path(proposal.class_path)) {
-        result.error = "proposal class path must be a src/ .java path: '" + proposal.class_path + "'";
+    if (proposal.edits.empty()) {
+        result.error = "proposal has no edits";
         return result;
+    }
+    for (const fixer::FileEdit& e : proposal.edits) {
+        if (!valid_class_path(e.class_path)) {
+            result.error = "proposal path must be a src/ .java path: '" + e.class_path + "'";
+            return result;
+        }
     }
     const fs::path root = fs::absolute(project_dir);
 
@@ -269,9 +275,11 @@ StageResult stage(const std::string& project_dir, const fixer::Proposal& proposa
             return result;
         }
     }
-    if (!write_text(tmp.path / proposal.class_path, proposal.new_source)) {
-        result.error = "cannot write proposal into the staging copy";
-        return result;
+    for (const fixer::FileEdit& e : proposal.edits) {
+        if (!write_text(tmp.path / e.class_path, e.new_source)) {
+            result.error = "cannot write " + e.class_path + " into the staging copy";
+            return result;
+        }
     }
 
     const wbx::RunResult compiled = wbx::compile_project(tmp.path.string());
@@ -297,35 +305,53 @@ ApplyResult apply(const std::string& project_dir, const fixer::Proposal& proposa
                                             : "staging failed: " + staged.error;
         return result;
     }
-    if (!valid_class_path(proposal.class_path)) {
-        result.error = "proposal class path must be a src/ .java path; nothing written";
+    if (proposal.edits.empty()) {
+        result.error = "proposal has no edits; nothing written";
         return result;
     }
 
-    const fs::path target = fs::absolute(project_dir) / proposal.class_path;
-    std::string current;
-    if (!read_text(target, current)) {
-        result.error = "cannot read " + target.string() + "; nothing written";
-        return result;
-    }
-    if (current != proposal.base_source) {
-        result.conflict = true;
-        result.error = "file changed since the proposal was made; nothing written";
-        return result;
+    // Check every file before writing any, so a conflict never leaves a half-applied proposal.
+    const fs::path root = fs::absolute(project_dir);
+    std::vector<std::string> currents;
+    for (const fixer::FileEdit& e : proposal.edits) {
+        if (!valid_class_path(e.class_path)) {
+            result.error = "proposal path must be a src/ .java path; nothing written";
+            return result;
+        }
+        std::string current;
+        if (!read_text(root / e.class_path, current)) {
+            result.error = "cannot read " + e.class_path + "; nothing written";
+            return result;
+        }
+        if (current != e.base_source) {
+            result.conflict = true;
+            result.error = "file changed since the proposal was made: " + e.class_path +
+                           "; nothing written";
+            return result;
+        }
+        currents.push_back(std::move(current));
     }
 
-    const fs::path backup_dir = fs::absolute(project_dir) / "out" / "backups";
-    const fs::path backup =
-        backup_dir / (timestamp() + "_" + target.stem().string() + ".java");
-    if (!write_text(backup, current)) {
-        result.error = "cannot write backup " + backup.string() + "; nothing written";
-        return result;
+    const fs::path backup_dir = root / "out" / "backups";
+    const std::string stamp = timestamp();
+    for (std::size_t i = 0; i < proposal.edits.size(); ++i) {
+        const fs::path target = root / proposal.edits[i].class_path;
+        const fs::path backup = backup_dir / (stamp + "_" + target.stem().string() + ".java");
+        if (!write_text(backup, currents[i])) {
+            result.error = "cannot write backup " + backup.string() + "; nothing written";
+            return result;
+        }
+        result.backups.push_back(backup.string());
     }
-    result.backup_path = backup.string();
+    result.backup_path = result.backups.empty() ? std::string() : result.backups.back();
 
-    if (!write_text(target, proposal.new_source)) {
-        result.error = "cannot write " + target.string() + " (backup kept at " + backup.string() + ")";
-        return result;
+    for (std::size_t i = 0; i < proposal.edits.size(); ++i) {
+        const fs::path target = root / proposal.edits[i].class_path;
+        if (!write_text(target, proposal.edits[i].new_source)) {
+            result.error = "cannot write " + target.string() + "; backups are in " + backup_dir.string();
+            return result;
+        }
+        result.written_paths.push_back(proposal.edits[i].class_path);
     }
     result.written = true;
     return result;
