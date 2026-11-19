@@ -285,7 +285,8 @@ void test_architect_counts() {
     CHECK(o.entries[0].types[0].methods == 2);
     CHECK(o.entries[0].types[0].fields == 1);
     CHECK(o.entries[0].types[1].nested);
-    CHECK(app::architect::summarize(o) == "2 files, 4 types, 4 methods");
+    CHECK(app::architect::summarize(o) == "2 files, 4 types, 4 methods, 3 findings: missing_tests demo/Money.java:2; "
+                                          "missing_tests demo/Shape.java:2; missing_tests demo/Shape.java:3");
 
     // A file over the byte cap is skipped and recorded.
     const std::vector<app::architect::Source> big = {
@@ -301,7 +302,8 @@ void test_architect_counts() {
     s.test = [] { return std::string("1 passed, 0 failed"); };
     const Snapshot snap = run_sync(kGood, s);
     CHECK(row(snap, "architect").status == NodeStatus::ok);
-    CHECK(row(snap, "architect").summary == "2 files, 4 types, 4 methods");
+    CHECK(row(snap, "architect").summary == "2 files, 4 types, 4 methods, 3 findings: missing_tests demo/Money.java:2; "
+                                          "missing_tests demo/Shape.java:2; missing_tests demo/Shape.java:3");
 }
 
 void test_architect_failure_routes_to_report() {

@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "architect_rules.hpp"
+
 namespace app::architect {
 
 // Caps: at most kMaxFiles files are read, and a file over kMaxFileBytes is skipped (recorded).
@@ -40,6 +42,7 @@ struct Outline {
     bool truncated = false;   // more than kMaxFiles files; the rest were not read
     std::vector<FileEntry> entries;  // one per parsed file
     std::vector<Skipped> skipped;
+    architect_rules::Architecture rules;  // dependency graph and rule findings for the same files
 };
 
 // One source text to outline. Used by outline_project and directly by tests.
@@ -49,13 +52,16 @@ struct Source {
 };
 
 // Pure: parses each source and builds the outline. Sources past kMaxFiles are not read.
-Outline outline_sources(const std::vector<Source>& sources);
+// `test_names` are the stems of the project's test files, used by the missing_tests rule.
+Outline outline_sources(const std::vector<Source>& sources,
+                        const std::vector<std::string>& test_names = {});
 
 // Reads <project_dir>/src recursively (sorted by path) and outlines it. Throws
 // std::runtime_error when there is no src directory or no .java files.
 Outline outline_project(const std::string& project_dir);
 
-// One line: "<files> files, <types> types, <methods> methods" plus any skipped or truncated note.
+// One line: "<files> files, <types> types, <methods> methods" plus any skipped or truncated note,
+// then "<n> findings" with up to five findings as "rule file:line" joined by "; ".
 std::string summarize(const Outline& outline);
 
 }  // namespace app::architect

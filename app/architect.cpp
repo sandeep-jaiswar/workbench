@@ -52,9 +52,9 @@ bool is_type(wb::SymbolKind kind) {
 }
 
 FileEntry outline_one(const std::string& path, const std::string& text, wb::Session& session,
-                      Outline& out) {
+                      Outline& out, std::vector<architect_rules::FileReport>& reports) {
     session.set_text(text);
-    const wb::Report report = session.analyze();
+    wb::Report report = session.analyze();
     FileEntry entry;
     entry.path = path;
     entry.package = package_name(text);
@@ -87,14 +87,16 @@ FileEntry outline_one(const std::string& path, const std::string& text, wb::Sess
         out.fields += t.fields;
     }
     ++out.files;
+    reports.push_back(architect_rules::FileReport{path, std::move(report)});
     return entry;
 }
 
 }  // namespace
 
-Outline outline_sources(const std::vector<Source>& sources) {
+Outline outline_sources(const std::vector<Source>& sources, const std::vector<std::string>& test_names) {
     Outline out;
     wb::Session session;
+    std::vector<architect_rules::FileReport> reports;
     for (const Source& src : sources) {
         if (out.files >= kMaxFiles) {
             out.truncated = true;
@@ -104,8 +106,9 @@ Outline outline_sources(const std::vector<Source>& sources) {
             out.skipped.push_back(Skipped{src.path, "over 4 MiB"});
             continue;
         }
-        out.entries.push_back(outline_one(src.path, src.text, session, out));
+        out.entries.push_back(outline_one(src.path, src.text, session, out, reports));
     }
+    out.rules = architect_rules::analyze(reports, test_names);
     return out;
 }
 
@@ -153,7 +156,21 @@ Outline outline_project(const std::string& project_dir) {
         sources.push_back(Source{rel, std::move(text)});
     }
 
-    Outline out = outline_sources(sources);
+    // Test class names: stems of the .java files under <project>/test, if the folder exists.
+    std::vector<std::string> test_names;
+    const fs::path test_dir = fs::absolute(project_dir) / "test";
+    if (fs::is_directory(test_dir, ec)) {
+        for (fs::recursive_directory_iterator it(test_dir, ec), end; it != end; it.increment(ec)) {
+            if (ec) break;
+            std::error_code fec;
+            if (it->is_regular_file(fec) && it->path().extension() == ".java") {
+                test_names.push_back(it->path().stem().string());
+            }
+        }
+        std::sort(test_names.begin(), test_names.end());
+    }
+
+    Outline out = outline_sources(sources, test_names);
     out.truncated = files.size() > kMaxFiles;
     out.skipped.insert(out.skipped.end(), skipped.begin(), skipped.end());
     return out;
@@ -164,6 +181,14 @@ std::string summarize(const Outline& outline) {
                     " types, " + std::to_string(outline.methods) + " methods";
     if (!outline.skipped.empty()) s += ", " + std::to_string(outline.skipped.size()) + " skipped";
     if (outline.truncated) s += ", capped at " + std::to_string(kMaxFiles) + " files";
+    const auto& findings = outline.rules.findings;
+    s += ", " + std::to_string(findings.size()) + " findings";
+    constexpr std::size_t kShown = 5;
+    for (std::size_t i = 0; i < findings.size() && i < kShown; ++i) {
+        s += i == 0 ? ": " : "; ";
+        s += findings[i].rule + " " + findings[i].file + ":" + std::to_string(findings[i].line);
+    }
+    if (findings.size() > kShown) s += "; +" + std::to_string(findings.size() - kShown) + " more";
     return s;
 }
 
