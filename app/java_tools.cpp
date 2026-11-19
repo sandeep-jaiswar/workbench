@@ -293,4 +293,44 @@ std::vector<Diagnostic> parse_javac_output(const std::string& output) {
     return found;
 }
 
+TestResult parse_test_output(const std::string& output) {
+    TestResult result;
+    int pass_lines = 0;
+    int fail_lines = 0;
+    bool have_summary = false;
+    std::size_t start = 0;
+    while (start < output.size()) {
+        std::size_t end = output.find('\n', start);
+        if (end == std::string::npos) end = output.size();
+        std::string line = output.substr(start, end - start);
+        start = end + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (line.compare(0, 5, "PASS ") == 0) {
+            ++pass_lines;
+        } else if (line.compare(0, 5, "FAIL ") == 0) {
+            ++fail_lines;
+            // The name ends at the first ':' (the message follows) or at the end of the line.
+            const std::size_t colon = line.find(':', 5);
+            std::string name = line.substr(5, colon == std::string::npos ? std::string::npos : colon - 5);
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            result.failing.push_back(name);
+        } else {
+            // "N passed, M failed" anywhere on the line; the last one wins.
+            int passed = 0;
+            int failed = 0;
+            if (std::sscanf(line.c_str(), "%d passed, %d failed", &passed, &failed) == 2) {
+                result.passed = passed;
+                result.failed = failed;
+                have_summary = true;
+            }
+        }
+    }
+    if (!have_summary) {
+        result.passed = pass_lines;
+        result.failed = fail_lines;
+    }
+    return result;
+}
+
 }  // namespace wbx

@@ -38,6 +38,25 @@ bool flag(const State& s, const char* key) {
     return v != nullptr && v->is_boolean() && v->get<bool>();
 }
 
+int integer(const State& s, const char* key) {
+    const auto* v = s.get(key);
+    return v != nullptr && v->is_number_integer() ? v->get<int>() : 0;
+}
+
+// Per-file, per-type rows for the architect step. Counts only, no symbol lists.
+nlohmann::json outline_json(const app::architect::Outline& o) {
+    nlohmann::json files = nlohmann::json::array();
+    for (const auto& f : o.entries) {
+        nlohmann::json types = nlohmann::json::array();
+        for (const auto& t : f.types) {
+            types.push_back({{"name", t.name}, {"kind", t.kind}, {"nested", t.nested},
+                             {"methods", t.methods}, {"fields", t.fields}});
+        }
+        files.push_back({{"file", f.path}, {"package", f.package}, {"types", types}});
+    }
+    return files;
+}
+
 std::string text(const State& s, const char* key) {
     const auto* v = s.get(key);
     return v != nullptr && v->is_string() ? v->get<std::string>() : std::string();
@@ -69,6 +88,9 @@ NodeFn guarded(std::string name, StepFn step, std::shared_ptr<TaskBoard> board) 
     };
 }
 
+// Keeps the event log readable when a project has many unreadable files.
+constexpr std::size_t kMaxLoggedSkips = 20;
+
 Outcome run_hook(const std::function<std::string()>& hook) {
     if (!hook) return Outcome{NodeStatus::skipped, "not wired (java_tools not connected)"};
     return Outcome{NodeStatus::ok, hook()};
@@ -88,8 +110,8 @@ const char* to_string(NodeStatus status) {
 }
 
 const std::vector<std::string>& node_names() {
-    static const std::vector<std::string> names = {"analyze", "generate", "check",
-                                                   "compile", "test",     "report"};
+    static const std::vector<std::string> names = {"analyze", "architect", "generate", "check",
+                                                   "compile", "test",     "debug",    "report"};
     return names;
 }
 
@@ -133,6 +155,23 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
                                                std::to_string(diagnostics) + " diagnostics"};
         }, board));
 
+    g.add_node("architect", guarded("architect",
+        [hook = services.architect](const State&, Trace& t, Patch& p) {
+            if (!hook) return Outcome{NodeStatus::skipped, "not wired (no project folder)"};
+            const app::architect::Outline o = hook();
+            std::size_t logged = 0;
+            for (const auto& skip : o.skipped) {
+                if (logged++ == kMaxLoggedSkips) break;
+                t.log("skipped " + skip.path + ": " + skip.reason);
+            }
+            p["architect_files"] = o.files;
+            p["architect_types"] = o.types;
+            p["architect_methods"] = o.methods;
+            p["architect_skipped"] = o.skipped.size();
+            p["architect_outline"] = outline_json(o);
+            return Outcome{NodeStatus::ok, app::architect::summarize(o)};
+        }, board));
+
     g.add_node("generate", guarded("generate",
         [gen = services.generate](const State& s, Trace& t, Patch& p) {
             if (!gen) throw std::runtime_error("no generator wired");
@@ -162,16 +201,41 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
         [hook = services.test](const State&, Trace&, Patch&) { return run_hook(hook); },
         board));
 
+    g.add_node("debug", guarded("debug",
+        [fixer = services.fixer](const State& s, Trace& t, Patch& p) {
+            if (!fixer) return Outcome{NodeStatus::skipped, "not wired (no fixer)"};
+            const int attempt = integer(s, "attempts") + 1;
+            p["attempts"] = attempt;
+            std::string what;
+            try {
+                what = fixer(text(s, "reason"));
+            } catch (const std::exception& e) {
+                p["debug_fixed"] = false;
+                return Outcome{NodeStatus::skipped, std::string("no fix: ") + e.what()};
+            } catch (...) {
+                p["debug_fixed"] = false;
+                return Outcome{NodeStatus::skipped, "no fix: unknown exception"};
+            }
+            p["debug_fixed"] = true;
+            t.log("attempt " + std::to_string(attempt) + ": " + what);
+            return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + what};
+        }, board));
+
     g.add_node("report", guarded("report",
         [](const State& s, Trace&, Patch&) {
             const std::string reason = text(s, "reason");
-            return Outcome{NodeStatus::ok,
-                           reason.empty() ? std::string("all steps passed")
-                                          : "stopped at " + reason};
+            std::string summary = reason.empty() ? std::string("all steps passed")
+                                                 : "stopped at " + reason;
+            const int attempts = integer(s, "attempts");
+            if (attempts > 0) summary += "; fix attempts " + std::to_string(attempts);
+            return Outcome{NodeStatus::ok, summary};
         }, board));
 
     g.set_start("analyze");
-    g.add_edge("analyze", "generate");
+    g.add_edge("analyze", "architect");
+    g.add_conditional_edge("architect", [](const State& s) {
+        return flag(s, "architect_ok") ? std::string("generate") : std::string("report");
+    });
     g.add_conditional_edge("generate", [](const State& s) {
         return flag(s, "generate_ok") ? std::string("check") : std::string("report");
     });
@@ -181,7 +245,15 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
     g.add_conditional_edge("compile", [](const State& s) {
         return flag(s, "compile_ok") ? std::string("test") : std::string("report");
     });
-    g.add_edge("test", wb::graph::kEnd);
+    // A passing test (or a skipped one) ends the run. A failing test goes to debug.
+    g.add_conditional_edge("test", [](const State& s) {
+        return flag(s, "test_ok") ? std::string(wb::graph::kEnd) : std::string("debug");
+    });
+    // A fix that was applied goes back to test while attempts remain; anything else reports.
+    g.add_conditional_edge("debug", [](const State& s) {
+        const bool retry = flag(s, "debug_fixed") && integer(s, "attempts") < kMaxFixAttempts;
+        return retry ? std::string("test") : std::string("report");
+    });
     g.add_edge("report", wb::graph::kEnd);
     return g;
 }

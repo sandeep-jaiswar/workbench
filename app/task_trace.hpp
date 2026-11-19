@@ -1,7 +1,8 @@
 #pragma once
 
-// Headless task runner for the Trace panel: a graph of named steps (analyze, generate,
-// check, compile, test, report) run on a worker thread. No ImGui, no GLFW, no display.
+// Headless task runner for the Trace panel: a graph of named steps (analyze, architect,
+// generate, check, compile, test, debug, report) run on a worker thread. No ImGui, no GLFW,
+// no display.
 // The panel reads Snapshot copies; it never touches the graph or the worker directly.
 
 #include <cstddef>
@@ -13,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "architect.hpp"
 #include "catalog.hpp"
 #include "graph.hpp"
 
@@ -26,21 +28,31 @@ const char* to_string(NodeStatus status);
 // Node names, in the order they appear in the panel.
 const std::vector<std::string>& node_names();
 
-// External steps. Set by the caller. An empty compile/test hook records that node as
-// skipped. A hook returns a one-line summary, or throws to fail the node.
+// Test failures send the run to `debug`, which may retry test up to this many fix attempts.
+inline constexpr int kMaxFixAttempts = 3;
+
+// External steps. Set by the caller. An empty hook records that node as skipped. A hook
+// returns a one-line summary, or throws to fail the node.
 struct Services {
     // Returns Java source for the pattern named "Singleton" with the given class name.
     std::function<std::string(const std::string& class_name)> generate;
     std::function<std::string()> compile;
+    // Throws when tests fail; the message is the failure report (counts and failing names).
     std::function<std::string()> test;
+    // Project outline for the architect step. Unset records architect as skipped.
+    std::function<app::architect::Outline()> architect;
+    // Optional fixer. Receives the failure report and returns a short description of an
+    // attempted fix, or throws when it has none. Unset: debug records skipped.
+    std::function<std::string(const std::string& failure_report)> fixer;
 };
 
 // Services that generate with the Singleton pattern from `catalog`. Compile and test are unset.
 Services make_services(const wb::Catalog& catalog);
 
-// The graph: analyze -> generate -> check -> compile -> test -> END, with failures routed
-// to report -> END. Node rows are written to `board`. The state passed to run() must
-// contain "class_name" (string).
+// The graph: analyze -> architect -> generate -> check -> compile -> test -> END. A failed
+// test goes to debug, which either sends the run back to test (bounded by kMaxFixAttempts,
+// state key "attempts") or to report. Other failures go to report -> END. Node rows are
+// written to `board`. The state passed to run() must contain "class_name" (string).
 wb::graph::Graph build_graph(std::string document_text, Services services,
                              std::shared_ptr<TaskBoard> board);
 

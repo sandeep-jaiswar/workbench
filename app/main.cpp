@@ -9,6 +9,7 @@
 #include "imgui.h"
 
 #include "app_window.hpp"
+#include "architect.hpp"
 #include "catalog.hpp"
 #include "editor.hpp"
 #include "generate_panel.hpp"
@@ -29,6 +30,19 @@ namespace {
 constexpr float kProjectWidth = 260.0f;
 constexpr float kGenerateWidth = 360.0f;
 constexpr float kOutputHeight = 190.0f;
+
+// "N passed, M failed; FAIL a, b" for the failure report. Long lists are cut after five names.
+std::string describe_tests(const wbx::TestResult& t) {
+    std::string s = std::to_string(t.passed) + " passed, " + std::to_string(t.failed) + " failed";
+    if (t.failing.empty()) return s;
+    s += "; FAIL ";
+    for (std::size_t i = 0; i < t.failing.size() && i < 5; ++i) {
+        if (i > 0) s += ", ";
+        s += t.failing[i];
+    }
+    if (t.failing.size() > 5) s += " (+" + std::to_string(t.failing.size() - 5) + " more)";
+    return s;
+}
 
 }  // namespace
 
@@ -67,9 +81,23 @@ int main(int argc, char** argv) {
         const std::string dir = project.tree.root().path.string();
         if (dir.empty()) throw std::runtime_error("open a project folder first");
         const wbx::RunResult r = wbx::run_tests(dir, "demo.TestRunner");
-        if (r.exit_code != 0) throw std::runtime_error("tests exit " + std::to_string(r.exit_code));
-        return "tests passed";
+        const wbx::TestResult t = wbx::parse_test_output(r.output);
+        if (r.exit_code == 0) return describe_tests(t);
+        // No counts in the output means the run never reached the tests (javac or timeout).
+        if (t.failed == 0 && t.failing.empty()) {
+            throw std::runtime_error(r.timed_out ? std::string("tests timed out")
+                                                 : "tests exit " + std::to_string(r.exit_code));
+        }
+        throw std::runtime_error(describe_tests(t));
     };
+    // The project's outline for the architect step.
+    trace.services.architect = [&project]() -> app::architect::Outline {
+        const std::string dir = project.tree.root().path.string();
+        if (dir.empty()) throw std::runtime_error("open a project folder first");
+        return app::architect::outline_project(dir);
+    };
+    // trace.services.fixer is left unset on purpose: no model call is wired, so the debug
+    // step records skipped and the run goes to report.
     bool show_trace = false;
     project.open_folder();
 

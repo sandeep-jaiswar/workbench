@@ -31,4 +31,16 @@ RunResult run_tests(const std::string& project_dir, const std::string& main_clas
 // Extracts the javac error lines from captured output. Other lines are ignored.
 std::vector<Diagnostic> parse_javac_output(const std::string& output);
 
+// Result lines of the sample test runner: "PASS <name>", "FAIL <name>: <message>" and a final
+// "N passed, M failed". `failing` holds the names from FAIL lines, in output order.
+struct TestResult {
+    int passed = 0;
+    int failed = 0;
+    std::vector<std::string> failing;
+};
+
+// Pure: reads the runner's output. Counts come from the final summary line when there is
+// one, otherwise from the PASS and FAIL lines.
+TestResult parse_test_output(const std::string& output);
+
 }  // namespace wbx

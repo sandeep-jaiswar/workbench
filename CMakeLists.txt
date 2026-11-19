@@ -56,6 +56,7 @@ add_executable(workbench
     app/document.cpp
     app/editor.cpp
     app/generate_panel.cpp
+    app/architect.cpp
     app/java_tools.cpp
     app/output.cpp
     app/project.cpp
@@ -81,7 +82,8 @@ target_include_directories(java_tools_test PRIVATE app)
 add_test(NAME java_tools_test COMMAND java_tools_test)
 
 # Trace panel's task runner, headless: wb_core only, no ImGui or GLFW.
-add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp)
+add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp app/architect.cpp
+               app/java_tools.cpp)
 target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
 add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)

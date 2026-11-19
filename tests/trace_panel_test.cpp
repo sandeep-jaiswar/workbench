@@ -9,7 +9,9 @@
 #include <thread>
 #include <vector>
 
+#include "architect.hpp"
 #include "catalog.hpp"
+#include "java_tools.hpp"
 #include "task_trace.hpp"
 
 namespace {
@@ -38,6 +40,29 @@ const char* kGood =
     "}\n";
 
 const char* kBroken = "public class Demo {\n    void f( {\n}\n";
+
+// The sample runner's exact output (samples/java-demo, test/demo/TestRunner.java).
+const char* kSampleTestOutput =
+    "PASS demo.CartTest.testAddingSameItemMergesQuantity\n"
+    "PASS demo.CartTest.testAddingSameItemWithDifferentPriceIsRejected\n"
+    "PASS demo.CartTest.testEmptyCartTotalIsZero\n"
+    "PASS demo.CartTest.testRemoveDropsTheLine\n"
+    "PASS demo.CartTest.testRemoveUnknownItemThrows\n"
+    "PASS demo.CartTest.testSubtotalSumsLineTotals\n"
+    "PASS demo.CartTest.testTaxComesFromInjectedPolicy\n"
+    "FAIL demo.CartTest.testTaxRoundsHalfUp: AssertionError: expected <$0.11> but was <$0.10>\n"
+    "PASS demo.CartTest.testTotalIncludesFlatTax\n"
+    "PASS demo.MoneyTest.testMinusBelowZeroIsRejected\n"
+    "PASS demo.MoneyTest.testPlusAndMinus\n"
+    "PASS demo.MoneyTest.testRejectsNegativeAmounts\n"
+    "PASS demo.MoneyTest.testTimesMultipliesByQuantity\n"
+    "PASS demo.MoneyTest.testToStringAlwaysShowsTwoDecimals\n"
+    "PASS demo.MoneyTest.testZeroIsZero\n"
+    "PASS demo.ReceiptTest.testEachItemAppearsWithItsLineTotal\n"
+    "PASS demo.ReceiptTest.testEmptyCartRendersZeroTotals\n"
+    "PASS demo.ReceiptTest.testSubtotalAndTaxLinesArePresent\n"
+    "PASS demo.ReceiptTest.testTotalLineShowsGrandTotal\n"
+    "18 passed, 1 failed\n";
 
 Services fake(const std::string& source) {
     Services s;
@@ -95,10 +120,13 @@ void test_happy_path() {
     CHECK(row(snap, "compile").status == NodeStatus::ok);
     CHECK(row(snap, "compile").summary == "1 class compiled");
     CHECK(row(snap, "test").status == NodeStatus::ok);
+    CHECK(row(snap, "architect").status == NodeStatus::skipped);
+    CHECK(row(snap, "debug").status == NodeStatus::pending);
     CHECK(row(snap, "report").status == NodeStatus::pending);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "generate", "check", "compile", "test"}));
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "compile", "test"}));
     CHECK(has_edge(snap, "-> END"));
     CHECK(!has_edge(snap, "-> report"));
+    CHECK(!has_edge(snap, "-> debug"));
 }
 
 void test_failing_check_routes_to_report() {
@@ -110,7 +138,7 @@ void test_failing_check_routes_to_report() {
     CHECK(row(snap, "compile").status == NodeStatus::pending);
     CHECK(row(snap, "test").status == NodeStatus::pending);
     CHECK(row(snap, "report").status == NodeStatus::ok);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "generate", "check", "report"}));
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "report"}));
     CHECK(has_edge(snap, "-> report"));
     CHECK(!has_edge(snap, "-> compile"));
 }
@@ -122,7 +150,7 @@ void test_unwired_hooks_are_skipped() {
     CHECK(row(snap, "compile").status == NodeStatus::skipped);
     CHECK(row(snap, "test").status == NodeStatus::skipped);
     CHECK(row(snap, "report").status == NodeStatus::pending);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "generate", "check", "compile", "test"}));
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "compile", "test"}));
 }
 
 void test_generate_failure_routes_to_report() {
@@ -134,7 +162,7 @@ void test_generate_failure_routes_to_report() {
     CHECK(row(snap, "generate").summary == "boom");
     CHECK(row(snap, "check").status == NodeStatus::pending);
     CHECK(row(snap, "report").status == NodeStatus::ok);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "generate", "report"}));
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "report"}));
 }
 
 void test_compile_failure_routes_to_report() {
@@ -145,7 +173,7 @@ void test_compile_failure_routes_to_report() {
     CHECK(row(snap, "compile").status == NodeStatus::failed);
     CHECK(row(snap, "test").status == NodeStatus::pending);
     CHECK(row(snap, "report").status == NodeStatus::ok);
-    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "generate", "check", "compile", "report"}));
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "generate", "check", "compile", "report"}));
 }
 
 void test_log_is_bounded() {
@@ -190,6 +218,179 @@ void test_real_singleton(const std::string& catalog_path) {
     CHECK(row(snap, "compile").status == NodeStatus::skipped);
 }
 
+void test_failing_test_routes_to_report() {
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("1 class compiled"); };
+    s.test = []() -> std::string {
+        throw std::runtime_error("1 passed, 1 failed; FAIL demo.CartTest.testTaxRoundsHalfUp");
+    };
+    const Snapshot snap = run_sync(kGood, s);
+
+    CHECK(snap.outcome == "ok");
+    CHECK(row(snap, "test").status == NodeStatus::failed);
+    CHECK(row(snap, "test").summary.find("demo.CartTest.testTaxRoundsHalfUp") != std::string::npos);
+    CHECK(row(snap, "debug").status == NodeStatus::skipped);
+    CHECK(row(snap, "debug").summary == "not wired (no fixer)");
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(row(snap, "report").summary.find("stopped at test: 1 passed, 1 failed") != std::string::npos);
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile", "test", "debug", "report"}));
+    CHECK(has_edge(snap, "-> debug"));
+    CHECK(has_edge(snap, "-> report"));
+}
+
+void test_parse_sample_output() {
+    const wbx::TestResult t = wbx::parse_test_output(kSampleTestOutput);
+    CHECK(t.passed == 18);
+    CHECK(t.failed == 1);
+    CHECK(t.failing == (std::vector<std::string>{"demo.CartTest.testTaxRoundsHalfUp"}));
+
+    // Without a summary line, counts come from PASS and FAIL lines (CRLF tolerated).
+    const wbx::TestResult lines = wbx::parse_test_output("PASS a.B.one\r\nFAIL a.B.two: x\r\n");
+    CHECK(lines.passed == 1);
+    CHECK(lines.failed == 1);
+    CHECK(lines.failing == (std::vector<std::string>{"a.B.two"}));
+
+    // Javac output or nothing at all: no counts, no names.
+    const wbx::TestResult none = wbx::parse_test_output("Main.java:3: error: ';' expected\n");
+    CHECK(none.passed == 0 && none.failed == 0 && none.failing.empty());
+    CHECK(wbx::parse_test_output("").failing.empty());
+}
+
+void test_architect_counts() {
+    const std::vector<app::architect::Source> sources = {
+        {"demo/Money.java",
+         "package demo;\n"
+         "public final class Money {\n"
+         "    private final long cents;\n"
+         "    public long cents() { return cents; }\n"
+         "    public Money plus(Money o) { return this; }\n"
+         "    static class Helper { void run() {} }\n"
+         "}\n"},
+        {"demo/Shape.java",
+         "package demo;\n"
+         "interface Shape { double area(); }\n"
+         "enum Unit { CM, MM }\n"},
+    };
+    const app::architect::Outline o = app::architect::outline_sources(sources);
+    CHECK(o.files == 2);
+    CHECK(o.types == 4);     // Money, Helper (nested), Shape, Unit
+    CHECK(o.methods == 4);   // cents, plus, run, area
+    CHECK(o.fields == 1);    // cents
+    CHECK(!o.truncated);
+    CHECK(o.entries.size() == 2);
+    CHECK(o.entries[0].package == "demo");
+    CHECK(o.entries[0].types.size() == 2);
+    CHECK(o.entries[0].types[0].name == "Money");
+    CHECK(o.entries[0].types[0].methods == 2);
+    CHECK(o.entries[0].types[0].fields == 1);
+    CHECK(o.entries[0].types[1].nested);
+    CHECK(app::architect::summarize(o) == "2 files, 4 types, 4 methods");
+
+    // A file over the byte cap is skipped and recorded.
+    const std::vector<app::architect::Source> big = {
+        {"Big.java", std::string(app::architect::kMaxFileBytes + 1, ' ')}};
+    const app::architect::Outline skipped = app::architect::outline_sources(big);
+    CHECK(skipped.files == 0);
+    CHECK(skipped.skipped.size() == 1);
+
+    // Through the graph: the architect row shows the summary line.
+    Services s = fake(kGood);
+    s.architect = [sources] { return app::architect::outline_sources(sources); };
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = [] { return std::string("1 passed, 0 failed"); };
+    const Snapshot snap = run_sync(kGood, s);
+    CHECK(row(snap, "architect").status == NodeStatus::ok);
+    CHECK(row(snap, "architect").summary == "2 files, 4 types, 4 methods");
+}
+
+void test_architect_failure_routes_to_report() {
+    Services s = fake(kGood);
+    s.architect = []() -> app::architect::Outline { throw std::runtime_error("no src directory"); };
+    const Snapshot snap = run_sync(kGood, s);
+    CHECK(row(snap, "architect").status == NodeStatus::failed);
+    CHECK(row(snap, "generate").status == NodeStatus::pending);
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "report"}));
+}
+
+void test_debug_loop_stops_after_three_attempts() {
+    int test_runs = 0;
+    int fixer_calls = 0;
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = [&test_runs]() -> std::string {
+        ++test_runs;
+        throw std::runtime_error("0 passed, 1 failed; FAIL demo.CartTest.testTaxRoundsHalfUp");
+    };
+    // A fake fixer that does nothing: the test keeps failing.
+    s.fixer = [&fixer_calls](const std::string& report) -> std::string {
+        ++fixer_calls;
+        CHECK(report.find("testTaxRoundsHalfUp") != std::string::npos);
+        return "no-op";
+    };
+    const Snapshot snap = run_sync(kGood, s);
+
+    CHECK(fixer_calls == app::task::kMaxFixAttempts);
+    CHECK(fixer_calls == 3);
+    CHECK(test_runs == 3);
+    CHECK(snap.outcome == "ok");
+    CHECK(row(snap, "debug").status == NodeStatus::ok);
+    CHECK(row(snap, "debug").summary == "attempt 3: no-op");
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(row(snap, "report").summary.find("fix attempts 3") != std::string::npos);
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile",
+              "test", "debug", "test", "debug", "test", "debug", "report"}));
+}
+
+void test_fixer_that_fixes_ends_the_run() {
+    int test_runs = 0;
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = [&test_runs]() -> std::string {
+        if (++test_runs == 1) throw std::runtime_error("0 passed, 1 failed");
+        return std::string("1 passed, 0 failed");
+    };
+    s.fixer = [](const std::string&) { return std::string("changed rounding"); };
+    const Snapshot snap = run_sync(kGood, s);
+
+    CHECK(test_runs == 2);
+    CHECK(row(snap, "test").status == NodeStatus::ok);
+    CHECK(row(snap, "report").status == NodeStatus::pending);
+    CHECK(has_edge(snap, "-> END"));
+}
+
+void test_fixer_that_throws_routes_to_report() {
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
+    s.fixer = [](const std::string&) -> std::string { throw std::runtime_error("no fix"); };
+    const Snapshot snap = run_sync(kGood, s);
+
+    CHECK(row(snap, "debug").status == NodeStatus::skipped);
+    CHECK(row(snap, "debug").summary == "no fix: no fix");
+    CHECK(row(snap, "test").status == NodeStatus::failed);
+    CHECK(row(snap, "report").status == NodeStatus::ok);
+    CHECK(step_order(snap) == (std::vector<std::string>{
+              "analyze", "architect", "generate", "check", "compile", "test", "debug", "report"}));
+}
+
+void test_panel_rows_match_graph_nodes() {
+    // Every node the graph runs has a row, so the panel table follows the graph.
+    Services s = fake(kGood);
+    s.compile = [] { return std::string("javac exit 0"); };
+    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
+    s.fixer = [](const std::string&) { return std::string("no-op"); };
+    const Snapshot snap = run_sync(kGood, s);
+    for (const std::string& name : step_order(snap)) {
+        bool found = false;
+        for (const auto& r : snap.nodes) found = found || r.name == name;
+        CHECK(found);
+    }
+    CHECK(snap.nodes.size() == app::task::node_names().size());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -200,6 +401,14 @@ int main(int argc, char** argv) {
     test_compile_failure_routes_to_report();
     test_log_is_bounded();
     test_runner_thread();
+    test_failing_test_routes_to_report();
+    test_parse_sample_output();
+    test_architect_counts();
+    test_architect_failure_routes_to_report();
+    test_debug_loop_stops_after_three_attempts();
+    test_fixer_that_fixes_ends_the_run();
+    test_fixer_that_throws_routes_to_report();
+    test_panel_rows_match_graph_nodes();
     if (argc > 1) test_real_singleton(argv[1]);
 
     if (failures == 0) std::printf("trace_panel_test: all checks passed\n");
