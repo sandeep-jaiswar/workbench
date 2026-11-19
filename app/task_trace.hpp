@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -16,6 +17,7 @@
 
 #include "architect.hpp"
 #include "catalog.hpp"
+#include "fixer.hpp"
 #include "graph.hpp"
 
 namespace app::task {
@@ -28,7 +30,8 @@ const char* to_string(NodeStatus status);
 // Node names, in the order they appear in the panel.
 const std::vector<std::string>& node_names();
 
-// Test failures send the run to `debug`, which may retry test up to this many fix attempts.
+// Fix attempts recorded by the debug node. Debug never applies a fix, so it no longer loops
+// back to test; the count is kept for the report.
 inline constexpr int kMaxFixAttempts = 3;
 
 // External steps. Set by the caller. An empty hook records that node as skipped. A hook
@@ -41,18 +44,21 @@ struct Services {
     std::function<std::string()> test;
     // Project outline for the architect step. Unset records architect as skipped.
     std::function<app::architect::Outline()> architect;
-    // Optional fixer. Receives the failure report and returns a short description of an
-    // attempted fix, or throws when it has none. Unset: debug records skipped.
-    std::function<std::string(const std::string& failure_report)> fixer;
+    // Optional fixer. Receives the failure context and returns a proposal, or throws when it
+    // has none. Unset: debug records skipped. The proposal is only shown; nothing is applied
+    // by the graph. Callers fill FailureContext::project_dir and class_path.
+    // main.cpp leaves this unset: no model provider configured.
+    app::fixer::Fixer fixer;
 };
 
 // Services that generate with the Singleton pattern from `catalog`. Compile and test are unset.
 Services make_services(const wb::Catalog& catalog);
 
 // The graph: analyze -> architect -> generate -> check -> compile -> test -> END. A failed
-// test goes to debug, which either sends the run back to test (bounded by kMaxFixAttempts,
-// state key "attempts") or to report. Other failures go to report -> END. Node rows are
+// test goes to debug, then report -> END. Other failures go to report -> END. Node rows are
 // written to `board`. The state passed to run() must contain "class_name" (string).
+// Debug calls the fixer, if set, and always goes to report. A proposal it gets is stored on
+// the board (Snapshot::proposal) for the panel to review; nothing is applied.
 wb::graph::Graph build_graph(std::string document_text, Services services,
                              std::shared_ptr<TaskBoard> board);
 
@@ -78,6 +84,8 @@ struct Snapshot {
     std::string error;
     std::vector<NodeRow> nodes;
     std::vector<LogLine> log;  // retained events, oldest first
+    // Proposal from the debug node, if the fixer returned one. Not applied.
+    std::optional<app::fixer::Proposal> proposal;
     std::uint64_t dropped = 0;
     std::uint64_t total_recorded = 0;
 };
@@ -92,6 +100,7 @@ public:
                  const std::string& summary);
     void finish(const wb::graph::Result& result);  // stores log, outcome; running = false
     void fail(const std::string& error);           // run ended without a graph result
+    void set_proposal(const app::fixer::Proposal& proposal);
     bool running() const;
     std::uint64_t version() const;
     Snapshot snapshot() const;

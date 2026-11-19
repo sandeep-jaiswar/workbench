@@ -57,6 +57,8 @@ add_executable(workbench
     app/editor.cpp
     app/generate_panel.cpp
     app/architect.cpp
+    app/apply_fix.cpp
+    app/fixer.cpp
     app/java_tools.cpp
     app/output.cpp
     app/outline.cpp
@@ -88,3 +90,10 @@ add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp ap
 target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
 add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)
+
+# Fix proposals: class-path mapping, Myers diff, and the stage/apply protocol on temp copies.
+add_executable(apply_fix_test tests/apply_fix_test.cpp app/apply_fix.cpp app/fixer.cpp
+               app/java_tools.cpp)
+target_include_directories(apply_fix_test PRIVATE app)
+target_link_libraries(apply_fix_test PRIVATE wb_core Threads::Threads)
+add_test(NAME apply_fix_test COMMAND apply_fix_test)

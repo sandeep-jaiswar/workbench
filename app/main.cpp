@@ -100,8 +100,8 @@ int main(int argc, char** argv) {
         if (dir.empty()) throw std::runtime_error("open a project folder first");
         return app::architect::outline_project(dir);
     };
-    // trace.services.fixer is left unset on purpose: no model call is wired, so the debug
-    // step records skipped and the run goes to report.
+    // no model provider configured: trace.services.fixer stays unset, so the debug step
+    // records skipped and the run goes to report.
     bool show_trace = false;
     project.open_folder();
 
@@ -154,7 +154,9 @@ int main(int argc, char** argv) {
                                     ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(640.0f, 460.0f), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Task trace", &show_trace)) {
-                app::draw_trace_panel(trace, editor.active(), generate.name);
+                app::draw_trace_panel(trace, editor.active(), generate.name,
+                                      project.tree.is_open() ? project.tree.root().path.string()
+                                                             : std::string());
             }
             ImGui::End();
         }

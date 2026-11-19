@@ -1,5 +1,6 @@
 #include "task_trace.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <optional>
 #include <stdexcept>
@@ -140,6 +141,8 @@ Services make_services(const wb::Catalog& catalog) {
 
 Graph build_graph(std::string document_text, Services services, std::shared_ptr<TaskBoard> board) {
     Graph g;
+    // The debug step hands the fixer the text under test; the analyze step moves its copy.
+    const std::string source_text = document_text;
 
     g.add_node("analyze", guarded("analyze",
         [doc = std::move(document_text)](const State&, Trace& t, Patch& p) {
@@ -202,23 +205,32 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
         board));
 
     g.add_node("debug", guarded("debug",
-        [fixer = services.fixer](const State& s, Trace& t, Patch& p) {
+        [fixer = services.fixer, source = source_text, board](const State& s, Trace& t, Patch& p) {
             if (!fixer) return Outcome{NodeStatus::skipped, "not wired (no fixer)"};
             const int attempt = integer(s, "attempts") + 1;
             p["attempts"] = attempt;
-            std::string what;
+            app::fixer::FailureContext ctx;
+            ctx.class_source = source;
+            ctx.test_output = text(s, "reason");
+            ctx.attempt = attempt;
+            app::fixer::Proposal proposal;
             try {
-                what = fixer(text(s, "reason"));
+                proposal = fixer(ctx);
             } catch (const std::exception& e) {
                 p["debug_fixed"] = false;
-                return Outcome{NodeStatus::skipped, std::string("no fix: ") + e.what()};
+                return Outcome{NodeStatus::skipped, std::string("no proposal: ") + e.what()};
             } catch (...) {
                 p["debug_fixed"] = false;
-                return Outcome{NodeStatus::skipped, "no fix: unknown exception"};
+                return Outcome{NodeStatus::skipped, "no proposal: unknown exception"};
             }
+            // The proposal was made against the text the fixer saw; apply() checks it.
+            proposal.base_source = ctx.class_source;
+            std::string rationale = proposal.rationale;
+            std::replace(rationale.begin(), rationale.end(), '\n', ' ');
             p["debug_fixed"] = true;
-            t.log("attempt " + std::to_string(attempt) + ": " + what);
-            return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + what};
+            board->set_proposal(proposal);
+            t.log("attempt " + std::to_string(attempt) + ": " + rationale);
+            return Outcome{NodeStatus::ok, "attempt " + std::to_string(attempt) + ": " + rationale};
         }, board));
 
     g.add_node("report", guarded("report",
@@ -249,11 +261,8 @@ Graph build_graph(std::string document_text, Services services, std::shared_ptr<
     g.add_conditional_edge("test", [](const State& s) {
         return flag(s, "test_ok") ? std::string(wb::graph::kEnd) : std::string("debug");
     });
-    // A fix that was applied goes back to test while attempts remain; anything else reports.
-    g.add_conditional_edge("debug", [](const State& s) {
-        const bool retry = flag(s, "debug_fixed") && integer(s, "attempts") < kMaxFixAttempts;
-        return retry ? std::string("test") : std::string("report");
-    });
+    // Debug never applies a fix, so there is nothing to retest: the run always reports.
+    g.add_edge("debug", "report");
     g.add_edge("report", wb::graph::kEnd);
     return g;
 }
@@ -303,6 +312,12 @@ void TaskBoard::finish(const wb::graph::Result& result) {
     }
     snap_.dropped = result.trace.dropped();
     snap_.total_recorded = result.trace.total_recorded();
+    ++version_;
+}
+
+void TaskBoard::set_proposal(const app::fixer::Proposal& proposal) {
+    std::lock_guard<std::mutex> lock(mu_);
+    snap_.proposal = proposal;
     ++version_;
 }
 
