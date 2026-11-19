@@ -11,6 +11,7 @@
 
 #include "architect.hpp"
 #include "catalog.hpp"
+#include "fixer.hpp"
 #include "java_tools.hpp"
 #include "task_trace.hpp"
 
@@ -319,68 +320,73 @@ void test_architect_failure_routes_to_report() {
     CHECK(step_order(snap) == (std::vector<std::string>{"analyze", "architect", "report"}));
 }
 
-void test_debug_loop_stops_after_three_attempts() {
+// The fake fixer returns a fixed proposal. Debug records the rationale, keeps the proposal on
+// the board, and routes to report: nothing is applied and test is not run again.
+void test_fake_fixer_records_rationale_and_routes_to_report() {
     int test_runs = 0;
     int fixer_calls = 0;
+    app::fixer::FailureContext seen;
     Services s = fake(kGood);
     s.compile = [] { return std::string("javac exit 0"); };
     s.test = [&test_runs]() -> std::string {
         ++test_runs;
         throw std::runtime_error("0 passed, 1 failed; FAIL demo.CartTest.testTaxRoundsHalfUp");
     };
-    // A fake fixer that does nothing: the test keeps failing.
-    s.fixer = [&fixer_calls](const std::string& report) -> std::string {
+    s.fixer = [&](const app::fixer::FailureContext& ctx) {
         ++fixer_calls;
-        CHECK(report.find("testTaxRoundsHalfUp") != std::string::npos);
-        return "no-op";
+        seen = ctx;
+        app::fixer::Proposal p;
+        p.class_path = "src/demo/Demo.java";
+        p.new_source = "public class Demo {}\n";
+        p.rationale = "round half up\nin FlatTax";
+        return p;
     };
     const Snapshot snap = run_sync(kGood, s);
 
-    CHECK(fixer_calls == app::task::kMaxFixAttempts);
-    CHECK(fixer_calls == 3);
-    CHECK(test_runs == 3);
+    CHECK(fixer_calls == 1);
+    CHECK(test_runs == 1);
+    CHECK(seen.test_output.find("testTaxRoundsHalfUp") != std::string::npos);
+    CHECK(seen.class_source == kGood);
+    CHECK(seen.attempt == 1);
     CHECK(snap.outcome == "ok");
     CHECK(row(snap, "debug").status == NodeStatus::ok);
-    CHECK(row(snap, "debug").summary == "attempt 3: no-op");
+    CHECK(row(snap, "debug").summary == "attempt 1: round half up in FlatTax");
     CHECK(row(snap, "report").status == NodeStatus::ok);
-    CHECK(row(snap, "report").summary.find("fix attempts 3") != std::string::npos);
+    CHECK(row(snap, "report").summary.find("fix attempts 1") != std::string::npos);
     CHECK(step_order(snap) == (std::vector<std::string>{
-              "analyze", "architect", "generate", "check", "compile",
-              "test", "debug", "test", "debug", "test", "debug", "report"}));
+              "analyze", "architect", "generate", "check", "compile", "test", "debug", "report"}));
+    CHECK(has_edge(snap, "-> report"));
+    CHECK(has_edge(snap, "-> debug"));
+    CHECK(snap.proposal.has_value());
+    CHECK(snap.proposal->class_path == "src/demo/Demo.java");
+    CHECK(snap.proposal->base_source == kGood);
 }
 
-void test_fixer_that_fixes_ends_the_run() {
-    int test_runs = 0;
+// Without a fixer the debug step is skipped and no proposal is stored.
+void test_unset_fixer_records_skipped_without_proposal() {
     Services s = fake(kGood);
     s.compile = [] { return std::string("javac exit 0"); };
-    s.test = [&test_runs]() -> std::string {
-        if (++test_runs == 1) throw std::runtime_error("0 passed, 1 failed");
-        return std::string("1 passed, 0 failed");
-    };
-    s.fixer = [](const std::string&) { return std::string("changed rounding"); };
+    s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
     const Snapshot snap = run_sync(kGood, s);
 
-    CHECK(test_runs == 2);
-    CHECK(row(snap, "test").status == NodeStatus::ok);
-    CHECK(row(snap, "debug").status == NodeStatus::ok);
+    CHECK(row(snap, "debug").status == NodeStatus::skipped);
+    CHECK(row(snap, "debug").summary == "not wired (no fixer)");
+    CHECK(!snap.proposal.has_value());
     CHECK(row(snap, "report").status == NodeStatus::ok);
-    // The fix cleared the failed attempt's reason, so the run reads as passed.
-    CHECK(row(snap, "report").summary == "all steps passed; fix attempts 1");
-    CHECK(step_order(snap) == (std::vector<std::string>{
-              "analyze", "architect", "generate", "check", "compile",
-              "test", "debug", "test", "report"}));
-    CHECK(has_edge(snap, "-> END"));
 }
 
 void test_fixer_that_throws_routes_to_report() {
     Services s = fake(kGood);
     s.compile = [] { return std::string("javac exit 0"); };
     s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
-    s.fixer = [](const std::string&) -> std::string { throw std::runtime_error("no fix"); };
+    s.fixer = [](const app::fixer::FailureContext&) -> app::fixer::Proposal {
+        throw std::runtime_error("no fix");
+    };
     const Snapshot snap = run_sync(kGood, s);
 
     CHECK(row(snap, "debug").status == NodeStatus::skipped);
-    CHECK(row(snap, "debug").summary == "no fix: no fix");
+    CHECK(row(snap, "debug").summary == "no proposal: no fix");
+    CHECK(!snap.proposal.has_value());
     CHECK(row(snap, "test").status == NodeStatus::failed);
     CHECK(row(snap, "report").status == NodeStatus::ok);
     CHECK(step_order(snap) == (std::vector<std::string>{
@@ -392,7 +398,12 @@ void test_panel_rows_match_graph_nodes() {
     Services s = fake(kGood);
     s.compile = [] { return std::string("javac exit 0"); };
     s.test = []() -> std::string { throw std::runtime_error("0 passed, 1 failed"); };
-    s.fixer = [](const std::string&) { return std::string("no-op"); };
+    s.fixer = [](const app::fixer::FailureContext&) {
+        app::fixer::Proposal p;
+        p.class_path = "src/demo/Demo.java";
+        p.rationale = "no-op";
+        return p;
+    };
     const Snapshot snap = run_sync(kGood, s);
     for (const std::string& name : step_order(snap)) {
         bool found = false;
@@ -416,8 +427,8 @@ int main(int argc, char** argv) {
     test_parse_sample_output();
     test_architect_counts();
     test_architect_failure_routes_to_report();
-    test_debug_loop_stops_after_three_attempts();
-    test_fixer_that_fixes_ends_the_run();
+    test_fake_fixer_records_rationale_and_routes_to_report();
+    test_unset_fixer_records_skipped_without_proposal();
     test_fixer_that_throws_routes_to_report();
     test_panel_rows_match_graph_nodes();
     if (argc > 1) test_real_singleton(argv[1]);

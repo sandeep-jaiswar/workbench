@@ -12,7 +12,7 @@ include(FetchContent)
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        01314725dc0cbb227113559f9285ca4acf90da7b)
+    GIT_TAG        e831df9a24e9e328ca786f23092a39d20a004330)
 FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
@@ -58,6 +58,8 @@ add_executable(workbench
     app/generate_panel.cpp
     app/architect.cpp
     app/architect_rules.cpp
+    app/apply_fix.cpp
+    app/fixer.cpp
     app/java_tools.cpp
     app/output.cpp
     app/outline.cpp
@@ -101,3 +103,9 @@ add_executable(architect_rules_test tests/architect_rules_test.cpp app/architect
 target_include_directories(architect_rules_test PRIVATE app)
 target_link_libraries(architect_rules_test PRIVATE wb_core)
 add_test(NAME architect_rules COMMAND architect_rules_test)
+# Fix proposals: class-path mapping, Myers diff, and the stage/apply protocol on temp copies.
+add_executable(apply_fix_test tests/apply_fix_test.cpp app/apply_fix.cpp app/fixer.cpp
+               app/java_tools.cpp)
+target_include_directories(apply_fix_test PRIVATE app)
+target_link_libraries(apply_fix_test PRIVATE wb_core Threads::Threads)
+add_test(NAME apply_fix_test COMMAND apply_fix_test)
