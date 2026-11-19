@@ -12,11 +12,12 @@ include(FetchContent)
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        bf68e68424d5f811de5a57e6288fca886f4c321f)
+    GIT_TAG        4fb0307608a0e43424afffb9975551006e5ce799)
 FetchContent_MakeAvailable(java_wasm)
 
 # ---- third-party: Dear ImGui, GLFW (fetched at pinned commits) -------------
 find_package(OpenGL REQUIRED)
+find_package(Threads REQUIRED)
 
 FetchContent_Declare(glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -58,8 +59,10 @@ add_executable(workbench
     app/java_tools.cpp
     app/output.cpp
     app/project.cpp
-    app/project_panel.cpp)
-target_include_directories(workbench PRIVATE app)
+    app/project_panel.cpp
+    app/task_trace.cpp
+    app/trace_panel.cpp)
+target_include_directories(workbench PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
 find_package(Threads REQUIRED)
 target_link_libraries(workbench PRIVATE wb_core imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
@@ -76,3 +79,9 @@ add_test(NAME document_test COMMAND document_test)
 add_executable(java_tools_test tests/java_tools_test.cpp app/java_tools.cpp)
 target_include_directories(java_tools_test PRIVATE app)
 add_test(NAME java_tools_test COMMAND java_tools_test)
+
+# Trace panel's task runner, headless: wb_core only, no ImGui or GLFW.
+add_executable(trace_panel_test tests/trace_panel_test.cpp app/task_trace.cpp)
+target_include_directories(trace_panel_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
+target_link_libraries(trace_panel_test PRIVATE wb_core Threads::Threads)
+add_test(NAME trace_panel COMMAND trace_panel_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)

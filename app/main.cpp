@@ -14,6 +14,10 @@
 #include "generate_panel.hpp"
 #include "output.hpp"
 #include "project_panel.hpp"
+#include "java_tools.hpp"
+#include "task_trace.hpp"
+#include <stdexcept>
+#include "trace_panel.hpp"
 #include "verify.hpp"
 
 #ifndef WB_DEFAULT_CATALOG
@@ -48,6 +52,25 @@ int main(int argc, char** argv) {
     app::GenerateState generate;
     app::CheckState check;
     app::JavaRun java_run;
+    app::TracePanel trace;
+    trace.services = app::task::make_services(catalog);
+    // Compile and test run the project folder through javac and the sample test runner. A non-zero
+    // exit throws, so the task graph records the node as failed and routes to the report step.
+    trace.services.compile = [&project]() -> std::string {
+        const std::string dir = project.tree.root().path.string();
+        if (dir.empty()) throw std::runtime_error("open a project folder first");
+        const wbx::RunResult r = wbx::compile_project(dir);
+        if (r.exit_code != 0) throw std::runtime_error("javac exit " + std::to_string(r.exit_code));
+        return "javac exit 0";
+    };
+    trace.services.test = [&project]() -> std::string {
+        const std::string dir = project.tree.root().path.string();
+        if (dir.empty()) throw std::runtime_error("open a project folder first");
+        const wbx::RunResult r = wbx::run_tests(dir, "demo.TestRunner");
+        if (r.exit_code != 0) throw std::runtime_error("tests exit " + std::to_string(r.exit_code));
+        return "tests passed";
+    };
+    bool show_trace = false;
     project.open_folder();
 
     window.run([&] {
@@ -83,8 +106,19 @@ int main(int argc, char** argv) {
 
         ImGui::SameLine();
         ImGui::BeginChild("generate", ImVec2(kGenerateWidth, 0), true);
+        if (ImGui::Button("Task trace")) show_trace = !show_trace;
         app::draw_generate_panel(generate, catalog, verifier);
         ImGui::EndChild();
+
+        if (show_trace) {
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 300.0f, vp->WorkPos.y + 120.0f),
+                                    ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(640.0f, 460.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Task trace", &show_trace)) {
+                app::draw_trace_panel(trace, editor.active(), generate.name);
+            }
+            ImGui::End();
+        }
 
         ImGui::End();
     });
