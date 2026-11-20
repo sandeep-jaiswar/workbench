@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
         wb::llm::Options llm_opt;
         llm_opt.n_ctx = 8192;
         llm_opt.max_new_tokens = 2048;
+        llm_opt.n_gpu_layers = WB_LLM_GPU_LAYERS;
         std::string llm_error;
         model = wb::llm::Model::load(model_path, llm_opt, &llm_error);
         if (model) {

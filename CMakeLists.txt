@@ -11,6 +11,29 @@ include(FetchContent)
 #   cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_JAVA_WASM=/path/to/java-wasm
 set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 set(WB_LLM ON CACHE BOOL "" FORCE)           # native local model (llama.cpp) for the fixer
+
+# GPU for the local model. On by default when the CUDA compiler is found; set -DWB_CUDA=OFF for CPU.
+# 20 of the 28 layers of the 7B model fit in 4 GB of VRAM (measured on a GTX 1650 Max-Q). The
+# architecture default is for that card (sm_75); override with -DCMAKE_CUDA_ARCHITECTURES=...
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    set(_wb_cuda_default ON)
+else()
+    set(_wb_cuda_default OFF)
+endif()
+option(WB_CUDA "Run the local model on the GPU when the CUDA toolkit is found" ${_wb_cuda_default})
+if(WB_CUDA)
+    enable_language(CUDA)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES 75)
+    endif()
+    set(WB_LLM_CUDA ON CACHE BOOL "" FORCE)  # read by java-wasm's llama.cpp fetch
+    set(WB_LLM_GPU_LAYERS 20 CACHE STRING "Layers offloaded to the GPU (7B model, 4 GB card)")
+else()
+    set(WB_LLM_CUDA OFF CACHE BOOL "" FORCE)
+    set(WB_LLM_GPU_LAYERS 0 CACHE STRING "Layers offloaded to the GPU (0 = CPU only)")
+endif()
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
     GIT_TAG        9854b8dd2eef28c6202c0672d749aeedb4d401f4)
@@ -79,7 +102,8 @@ target_link_libraries(workbench PRIVATE wb_core wb_llm imgui Threads::Threads)
 # The catalog lives in java-wasm; the app defaults to that copy.
 target_compile_definitions(workbench PRIVATE
     WB_DEFAULT_CATALOG="${java_wasm_SOURCE_DIR}/catalog/patterns.json"
-    WB_DEFAULT_MODEL="${WB_MODEL_DIR}/qwen2.5-coder-7b-instruct-q4_k_m.gguf")
+    WB_DEFAULT_MODEL="${WB_MODEL_DIR}/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+    WB_LLM_GPU_LAYERS=${WB_LLM_GPU_LAYERS})
 
 # ---- tests ------------------------------------------------------------------
 # Headless: Document only, no ImGui, GLFW or display.
