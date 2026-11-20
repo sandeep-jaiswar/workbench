@@ -151,7 +151,11 @@ int main(int argc, char** argv) {
         wb::llm::Options llm_opt;
         llm_opt.n_ctx = 8192;
         llm_opt.max_new_tokens = 2048;
+        // Smaller context for machines short on RAM: WB_LLM_CTX and WB_LLM_MAX_NEW override the defaults.
+        if (const char* c = std::getenv("WB_LLM_CTX")) llm_opt.n_ctx = std::atoi(c);
+        if (const char* c = std::getenv("WB_LLM_MAX_NEW")) llm_opt.max_new_tokens = std::atoi(c);
         llm_opt.n_gpu_layers = WB_LLM_GPU_LAYERS;
+        if (const char* c = std::getenv("WB_LLM_GPU_LAYERS_RUN")) llm_opt.n_gpu_layers = std::atoi(c);
         std::string llm_error;
         model = wb::llm::Model::load(model_path, llm_opt, &llm_error);
         if (model) {
