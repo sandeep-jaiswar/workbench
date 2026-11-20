@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <string_view>
 
 #include "imgui.h"
 
@@ -110,11 +111,13 @@ void poll_review(FixReview& review) {
 
 void draw_diff(const std::string& diff) {
     ImGui::BeginChild("fix_diff", ImVec2(0, 170), true, ImGuiWindowFlags_HorizontalScrollbar);
+    // Runs every frame while the review is open, so lines are views into `diff`, not copies.
+    const std::string_view text(diff);
     std::size_t start = 0;
-    while (start < diff.size()) {
-        std::size_t end = diff.find('\n', start);
-        if (end == std::string::npos) end = diff.size();
-        const std::string line = diff.substr(start, end - start);
+    while (start < text.size()) {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) end = text.size();
+        const std::string_view line = text.substr(start, end - start);
         start = end + 1;
         ImVec4 color(0.85f, 0.85f, 0.85f, 1);
         if (line.compare(0, 1, "+") == 0 && line.compare(0, 3, "+++") != 0) {
@@ -124,7 +127,7 @@ void draw_diff(const std::string& diff) {
         } else if (line.compare(0, 2, "@@") == 0) {
             color = ImVec4(0.5f, 0.7f, 1.0f, 1);
         }
-        ImGui::TextColored(color, "%s", line.c_str());
+        ImGui::TextColored(color, "%.*s", static_cast<int>(line.size()), line.data());
     }
     ImGui::EndChild();
 }

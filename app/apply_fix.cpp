@@ -44,6 +44,9 @@ struct Edit {
 
 // Myers' O(ND) greedy search. Records the furthest-reaching V vector per round, then
 // walks back from the end to recover one shortest edit script.
+//
+// Each round's record keeps only diagonals -d..d (2d+1 entries), not the whole V vector.
+// The backtrack reads only diagonals -(d-1)..(d-1) of that record, so the script is the same.
 std::vector<Edit> myers(const std::vector<std::string>& a, const std::vector<std::string>& b) {
     const long n = static_cast<long>(a.size());
     const long m = static_cast<long>(b.size());
@@ -54,7 +57,8 @@ std::vector<Edit> myers(const std::vector<std::string>& a, const std::vector<std
 
     long found_d = 0;
     for (long d = 0; d <= max; ++d) {
-        trace.push_back(v);
+        // trace[d][k + d] holds diagonal k as it was before round d.
+        trace.emplace_back(v.begin() + (offset - d), v.begin() + (offset + d + 1));
         bool done = false;
         for (long k = -d; k <= d && !done; k += 2) {
             long x = 0;
@@ -85,11 +89,11 @@ std::vector<Edit> myers(const std::vector<std::string>& a, const std::vector<std
         const std::vector<long>& tv = trace[static_cast<std::size_t>(d)];
         const long k = x - y;
         const long prev_k =
-            (k == -d || (k != d && tv[static_cast<std::size_t>(offset + k - 1)] <
-                                      tv[static_cast<std::size_t>(offset + k + 1)]))
+            (k == -d || (k != d && tv[static_cast<std::size_t>(d + k - 1)] <
+                                      tv[static_cast<std::size_t>(d + k + 1)]))
                 ? k + 1
                 : k - 1;
-        const long prev_x = tv[static_cast<std::size_t>(offset + prev_k)];
+        const long prev_x = tv[static_cast<std::size_t>(d + prev_k)];
         const long prev_y = prev_x - prev_k;
         while (x > prev_x && y > prev_y) {
             script.push_back({Op::equal, static_cast<std::size_t>(x - 1), static_cast<std::size_t>(y - 1)});

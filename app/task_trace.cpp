@@ -1,6 +1,7 @@
 #include "task_trace.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -163,35 +164,43 @@ std::vector<app::fixer::SourceFile> choose_files(const std::string& project_dir,
                                                  const std::string& test_source) {
     namespace fs = std::filesystem;
     constexpr std::size_t kBudget = 12000;  // about 3000 tokens of source
-    std::vector<app::fixer::SourceFile> all;
+    // Only paths and sizes are gathered and sorted. A file's text is read only when the budget
+    // admits it, so a large project is not read in full for a prompt of a few kilobytes.
+    struct Candidate {
+        app::fixer::SourceFile file;  // text stays empty until it is chosen
+        fs::path full;
+        std::uintmax_t size = 0;
+        bool referenced = false;
+    };
+    std::vector<Candidate> all;
     std::error_code ec;
     const fs::path src = fs::path(project_dir) / "src";
-    if (!fs::is_directory(src, ec)) return all;
+    if (!fs::is_directory(src, ec)) return {};
     for (auto it = fs::recursive_directory_iterator(src, ec); !ec && it != fs::recursive_directory_iterator();
          it.increment(ec)) {
         if (!it->is_regular_file(ec) || it->path().extension() != ".java") continue;
-        app::fixer::SourceFile f;
-        f.path = fs::relative(it->path(), project_dir, ec).generic_string();
-        if (!read_file(it->path(), f.text)) continue;
-        all.push_back(std::move(f));
+        Candidate c;
+        c.file.path = fs::relative(it->path(), project_dir, ec).generic_string();
+        c.full = it->path();
+        c.size = fs::file_size(c.full, ec);
+        if (ec) continue;
+        const std::string stem = it->path().stem().string();
+        c.referenced = test_source.find(stem) != std::string::npos || class_source.find(stem) != std::string::npos;
+        all.push_back(std::move(c));
     }
-    auto referenced = [&](const app::fixer::SourceFile& f) {
-        const std::string stem = fs::path(f.path).stem().string();
-        return test_source.find(stem) != std::string::npos || class_source.find(stem) != std::string::npos;
-    };
-    std::sort(all.begin(), all.end(), [&](const app::fixer::SourceFile& a, const app::fixer::SourceFile& b) {
-        if (a.path == class_path) return true;
-        if (b.path == class_path) return false;
-        const bool ra = referenced(a), rb = referenced(b);
-        if (ra != rb) return ra;
-        return a.path < b.path;
+    std::sort(all.begin(), all.end(), [&](const Candidate& a, const Candidate& b) {
+        if (a.file.path == class_path) return true;
+        if (b.file.path == class_path) return false;
+        if (a.referenced != b.referenced) return a.referenced;
+        return a.file.path < b.file.path;
     });
     std::vector<app::fixer::SourceFile> chosen;
     std::size_t used = 0;
-    for (auto& f : all) {
-        if (!chosen.empty() && used + f.text.size() > kBudget) continue;
-        used += f.text.size();
-        chosen.push_back(std::move(f));
+    for (auto& c : all) {
+        if (!chosen.empty() && used + c.size > kBudget) continue;
+        if (!read_file(c.full, c.file.text)) continue;
+        used += c.file.text.size();
+        chosen.push_back(std::move(c.file));
     }
     return chosen;
 }
