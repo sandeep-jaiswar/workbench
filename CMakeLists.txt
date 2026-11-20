@@ -13,7 +13,7 @@ set(WB_BUILD_TESTS OFF CACHE BOOL "" FORCE)  # java-wasm owns the core tests
 set(WB_LLM ON CACHE BOOL "" FORCE)           # native local model (llama.cpp) for the fixer
 FetchContent_Declare(java_wasm
     GIT_REPOSITORY https://github.com/sandeep-jaiswar/java-wasm.git
-    GIT_TAG        f5dbfe5758f73976117c51d899fd52fa3d406fd4)
+    GIT_TAG        9854b8dd2eef28c6202c0672d749aeedb4d401f4)
 FetchContent_MakeAvailable(java_wasm)
 
 # Where the default local model lives. Install it with java-wasm's scripts/fetch-model.sh <dir>.
