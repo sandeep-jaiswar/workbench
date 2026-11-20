@@ -1,7 +1,8 @@
 // Workbench: Dear ImGui desktop front end for the java-wasm pipeline.
 // Entry point and root layout. Window and frame loop: app_window.cpp. Panels: *_panel, editor,
-// output and generate_panel sources.
+// output, chat and chat_panel sources.
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -13,7 +14,8 @@
 #include "architect.hpp"
 #include "catalog.hpp"
 #include "editor.hpp"
-#include "generate_panel.hpp"
+#include "chat.hpp"
+#include "chat_panel.hpp"
 #include "outline.hpp"
 #include "output.hpp"
 #include "project_panel.hpp"
@@ -25,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include "trace_panel.hpp"
 #include "verify.hpp"
@@ -36,7 +39,7 @@
 namespace {
 
 constexpr float kProjectWidth = 260.0f;
-constexpr float kGenerateWidth = 360.0f;
+constexpr float kChatWidth = 360.0f;
 constexpr float kOutputHeight = 190.0f;
 constexpr float kOutlineShare = 0.4f;  // share of the left column given to the outline
 
@@ -94,7 +97,8 @@ int main(int argc, char** argv) {
     app::ProjectPanel project;
     app::Editor editor;
     app::Outline outline;
-    app::GenerateState generate;
+    app::chat::ChatState chat_state;
+    app::ChatPanel chat_panel;
     app::CheckState check;
     app::JavaRun java_run;
     app::TracePanel trace;
@@ -144,6 +148,7 @@ int main(int argc, char** argv) {
     // Local model for the debug step. WB_MODEL=/path/to/model.gguf overrides the default model,
     // which scripts/fetch-model.sh installs. With no model file the debug step is skipped.
     std::shared_ptr<wb::llm::Model> model;
+    const auto model_lock = std::make_shared<std::mutex>();
     const char* env_model = std::getenv("WB_MODEL");
     const std::string model_path = (env_model && *env_model) ? env_model : WB_DEFAULT_MODEL;
     if (std::FILE* f = std::fopen(model_path.c_str(), "rb")) {
@@ -159,7 +164,32 @@ int main(int argc, char** argv) {
         std::string llm_error;
         model = wb::llm::Model::load(model_path, llm_opt, &llm_error);
         if (model) {
-            trace.services.fixer = app::fixer::make_llm_fixer(model);
+            // The chat and the debug step share one llama context, and the debug step runs on the
+            // task worker thread. Both take model_lock around each call.
+            const auto inner = app::fixer::make_llm_fixer(model);
+            trace.services.fixer = [inner, model_lock](const app::fixer::FailureContext& ctx) {
+                std::lock_guard<std::mutex> lock(*model_lock);
+                return inner(ctx);
+            };
+            chat_state.responder = [model, model_lock, model_path](const std::string& system,
+                                                                   const std::string& user) {
+                std::lock_guard<std::mutex> lock(*model_lock);
+                std::string out;
+                std::string error;
+                const auto started = std::chrono::steady_clock::now();
+                const bool ok = model->chat(system, user, &out, &error);
+                const double secs =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                if (!ok) {
+                    std::fprintf(stderr, "chat: local model failed after %.1f s: %s\n", secs,
+                                 error.c_str());
+                    throw std::runtime_error(error);
+                }
+                std::fprintf(stderr,
+                             "chat: answered by local model %s in %.1f s (prompt %zu bytes, reply %zu bytes)\n",
+                             model_path.c_str(), secs, system.size() + user.size(), out.size());
+                return out;
+            };
             std::fprintf(stderr, "fixer: local model loaded (%s)\n", model_path.c_str());
         } else {
             std::fprintf(stderr, "fixer: model not loaded: %s\n", llm_error.c_str());
@@ -181,7 +211,7 @@ int main(int argc, char** argv) {
 
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float center_w = avail.x - kProjectWidth - kGenerateWidth - 2.0f * spacing;
+        const float center_w = avail.x - kProjectWidth - kChatWidth - 2.0f * spacing;
 
         // Project tree on top, outline of the active file below it.
         ImGui::BeginGroup();
@@ -210,9 +240,12 @@ int main(int argc, char** argv) {
         ImGui::EndChild();
 
         ImGui::SameLine();
-        ImGui::BeginChild("generate", ImVec2(kGenerateWidth, 0), true);
-        if (ImGui::Button("Task trace")) show_trace = !show_trace;
-        app::draw_generate_panel(generate, catalog, verifier);
+        ImGui::BeginChild("chat", ImVec2(kChatWidth, 0), true);
+        const app::Document* active_doc = editor.active();
+        app::chat::CommandEnv chat_env{catalog, verifier, chat_state.class_name,
+                                       active_doc ? &active_doc->text() : nullptr};
+        chat_state.poll();
+        if (app::draw_chat_panel(chat_panel, chat_state, chat_env)) show_trace = !show_trace;
         ImGui::EndChild();
 
         if (show_trace) {
@@ -220,7 +253,7 @@ int main(int argc, char** argv) {
                                     ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(640.0f, 460.0f), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Task trace", &show_trace)) {
-                app::draw_trace_panel(trace, editor.active(), generate.name,
+                app::draw_trace_panel(trace, editor.active(), chat_state.class_name,
                                       project.tree.is_open() ? project.tree.root().path.string()
                                                              : std::string());
             }

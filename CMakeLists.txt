@@ -82,7 +82,8 @@ add_executable(workbench
     app/app_window.cpp
     app/document.cpp
     app/editor.cpp
-    app/generate_panel.cpp
+    app/chat.cpp
+    app/chat_panel.cpp
     app/architect.cpp
     app/architect_rules.cpp
     app/apply_fix.cpp
@@ -147,3 +148,9 @@ add_executable(llm_fixer_test tests/llm_fixer_test.cpp app/llm_fixer.cpp app/fix
 target_include_directories(llm_fixer_test PRIVATE app)
 target_link_libraries(llm_fixer_test PRIVATE wb_llm)
 add_test(NAME llm_fixer COMMAND llm_fixer_test ${WB_TEST_MODEL})
+
+# Chat console: slash commands, prompt budget, worker reply. Headless, wb_core only.
+add_executable(chat_test tests/chat_test.cpp app/chat.cpp)
+target_include_directories(chat_test PRIVATE app ${java_wasm_SOURCE_DIR}/src/graph)
+target_link_libraries(chat_test PRIVATE wb_core Threads::Threads)
+add_test(NAME chat COMMAND chat_test ${java_wasm_SOURCE_DIR}/catalog/patterns.json)

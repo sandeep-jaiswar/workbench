@@ -37,8 +37,16 @@ GLFW is built with the X11 backend only. For Wayland, install `wayland-scanner` 
 
 ## Using the app
 
-- **Generate:** pick a pattern, enter a class name, and click Generate. The code is shown only if it passes the checks; otherwise the reasons are shown.
-- **Check:** paste any Java source and click Check syntax to see the first error line.
+The right-hand panel is a chat console. Type a command or a question and press Enter.
+
+- `/patterns` lists the catalog patterns.
+- `/generate <pattern> [Class]` generates a pattern and shows the code only if it passes the checks; otherwise the reasons are shown.
+- `/check` runs the syntax check on the active file.
+- `/name <Class>` sets the class name used by `/generate` and the Task trace.
+- `/clear` clears the conversation; `/help` lists the commands.
+- Any other text goes to the local model (java-wasm's llm module) with the recent conversation as context. Without a model it says so and only the commands work.
+
+The Task trace button is in the chat header. The chat and the debug step share the model, so they take turns.
 
 ## Status
 
