@@ -42,78 +42,105 @@ struct Edit {
     std::size_t b;  // index into new lines (equal, ins)
 };
 
-// Myers' O(ND) greedy search. Records the furthest-reaching V vector per round, then
-// walks back from the end to recover one shortest edit script.
-//
-// Each round's record keeps only diagonals -d..d (2d+1 entries), not the whole V vector.
-// The backtrack reads only diagonals -(d-1)..(d-1) of that record, so the script is the same.
-std::vector<Edit> myers(const std::vector<std::string>& a, const std::vector<std::string>& b) {
-    const long n = static_cast<long>(a.size());
-    const long m = static_cast<long>(b.size());
-    const long max = n + m;
-    const long offset = max + 1;
-    std::vector<long> v(static_cast<std::size_t>(2 * max + 3), 0);
-    std::vector<std::vector<long>> trace;
+// Myers' O(ND) greedy search in linear space (Myers 1986, section 4b). Finds the middle snake
+// of the region, then recurses on the two halves. Time O((N+M)·D), space O(N+M).
+// Common prefixes and suffixes are emitted without search. A region with an empty side is
+// all inserts or all deletes.
+struct Snake {
+    long x, y;  // start, region-relative
+    long u, v;  // end, region-relative
+    long d;     // edit count of the whole region when the snake was found
+};
 
-    long found_d = 0;
-    for (long d = 0; d <= max; ++d) {
-        // trace[d][k + d] holds diagonal k as it was before round d.
-        trace.emplace_back(v.begin() + (offset - d), v.begin() + (offset + d + 1));
-        bool done = false;
-        for (long k = -d; k <= d && !done; k += 2) {
-            long x = 0;
-            if (k == -d || (k != d && v[static_cast<std::size_t>(offset + k - 1)] <
-                                          v[static_cast<std::size_t>(offset + k + 1)])) {
-                x = v[static_cast<std::size_t>(offset + k + 1)];  // step down: insertion
-            } else {
-                x = v[static_cast<std::size_t>(offset + k - 1)] + 1;  // step right: deletion
-            }
-            long y = x - k;
-            while (x < n && y < m && a[static_cast<std::size_t>(x)] == b[static_cast<std::size_t>(y)]) {
-                ++x;
-                ++y;
-            }
-            v[static_cast<std::size_t>(offset + k)] = x;
-            if (x >= n && y >= m) {
-                found_d = d;
-                done = true;
-            }
-        }
-        if (done) break;
+struct Differ {
+    const std::vector<std::string>& a;
+    const std::vector<std::string>& b;
+    std::vector<long> vf, vb;  // furthest x per diagonal, forward and reverse; index = k + off
+    long off;
+    std::vector<Edit>& out;
+
+    Differ(const std::vector<std::string>& a_, const std::vector<std::string>& b_, std::vector<Edit>& out_)
+        : a(a_), b(b_), off(static_cast<long>(a_.size() + b_.size()) + 1), out(out_) {
+        const std::size_t width = static_cast<std::size_t>(2 * (a_.size() + b_.size()) + 3);
+        vf.assign(width, 0);
+        vb.assign(width, 0);
     }
 
-    std::vector<Edit> script;
-    long x = n;
-    long y = m;
-    for (long d = found_d; d > 0; --d) {
-        const std::vector<long>& tv = trace[static_cast<std::size_t>(d)];
-        const long k = x - y;
-        const long prev_k =
-            (k == -d || (k != d && tv[static_cast<std::size_t>(d + k - 1)] <
-                                      tv[static_cast<std::size_t>(d + k + 1)]))
-                ? k + 1
-                : k - 1;
-        const long prev_x = tv[static_cast<std::size_t>(d + prev_k)];
-        const long prev_y = prev_x - prev_k;
-        while (x > prev_x && y > prev_y) {
-            script.push_back({Op::equal, static_cast<std::size_t>(x - 1), static_cast<std::size_t>(y - 1)});
-            --x;
-            --y;
+    // Middle snake of a[al, al+N) against b[bl, bl+M), with N and M both > 0 after trimming.
+    Snake middle_snake(std::size_t al, std::size_t bl, long N, long M) {
+        const long delta = N - M;
+        const bool odd = (delta & 1) != 0;
+        vf[static_cast<std::size_t>(off + 1)] = 0;
+        vb[static_cast<std::size_t>(off + 1)] = 0;
+        const long max_d = (N + M + 1) / 2;
+        for (long d = 0; d <= max_d; ++d) {
+            for (long k = -d; k <= d; k += 2) {
+                long x = (k == -d || (k != d && vf[idx(k - 1)] < vf[idx(k + 1)])) ? vf[idx(k + 1)]
+                                                                                 : vf[idx(k - 1)] + 1;
+                long y = x - k;
+                const long x0 = x, y0 = y;
+                while (x < N && y < M && a[al + static_cast<std::size_t>(x)] == b[bl + static_cast<std::size_t>(y)]) {
+                    ++x;
+                    ++y;
+                }
+                vf[idx(k)] = x;
+                if (odd && k >= delta - (d - 1) && k <= delta + (d - 1) && vf[idx(k)] + vb[idx(delta - k)] >= N) {
+                    return {x0, y0, x, y, 2 * d - 1};
+                }
+            }
+            for (long k = -d; k <= d; k += 2) {
+                long x = (k == -d || (k != d && vb[idx(k - 1)] < vb[idx(k + 1)])) ? vb[idx(k + 1)]
+                                                                                 : vb[idx(k - 1)] + 1;
+                long y = x - k;
+                const long x0 = x, y0 = y;
+                while (x < N && y < M &&
+                       a[al + static_cast<std::size_t>(N - 1 - x)] == b[bl + static_cast<std::size_t>(M - 1 - y)]) {
+                    ++x;
+                    ++y;
+                }
+                vb[idx(k)] = x;
+                if (!odd && k >= delta - d && k <= delta + d && vb[idx(k)] + vf[idx(delta - k)] >= N) {
+                    return {N - x, M - y, N - x0, M - y0, 2 * d};
+                }
+            }
         }
-        if (x == prev_x) {
-            script.push_back({Op::ins, 0, static_cast<std::size_t>(prev_y)});
+        return {0, 0, 0, 0, 0};  // not reached: the search always meets in the middle
+    }
+
+    std::size_t idx(long k) const { return static_cast<std::size_t>(off + k); }
+
+    // Appends the edit script for a[al, ar) against b[bl, br).
+    void solve(std::size_t al, std::size_t ar, std::size_t bl, std::size_t br) {
+        while (al < ar && bl < br && a[al] == b[bl]) {
+            out.push_back({Op::equal, al, bl});
+            ++al;
+            ++bl;
+        }
+        std::size_t tail = 0;
+        while (al < ar - tail && bl < br - tail && a[ar - 1 - tail] == b[br - 1 - tail]) ++tail;
+        ar -= tail;
+        br -= tail;
+        const long N = static_cast<long>(ar - al);
+        const long M = static_cast<long>(br - bl);
+        if (N == 0) {
+            for (std::size_t j = bl; j < br; ++j) out.push_back({Op::ins, 0, j});
+        } else if (M == 0) {
+            for (std::size_t i = al; i < ar; ++i) out.push_back({Op::del, i, 0});
         } else {
-            script.push_back({Op::del, static_cast<std::size_t>(prev_x), 0});
+            const Snake s = middle_snake(al, bl, N, M);
+            const std::size_t x = al + static_cast<std::size_t>(s.x), y = bl + static_cast<std::size_t>(s.y);
+            const std::size_t u = al + static_cast<std::size_t>(s.u), v = bl + static_cast<std::size_t>(s.v);
+            solve(al, x, bl, y);
+            for (std::size_t i = x; i < u; ++i) out.push_back({Op::equal, i, y + (i - x)});
+            solve(u, ar, v, br);
         }
-        x = prev_x;
-        y = prev_y;
+        for (std::size_t t = tail; t > 0; --t) out.push_back({Op::equal, ar + (tail - t), br + (tail - t)});
     }
-    while (x > 0 && y > 0) {  // the d == 0 snake
-        script.push_back({Op::equal, static_cast<std::size_t>(x - 1), static_cast<std::size_t>(y - 1)});
-        --x;
-        --y;
-    }
-    std::reverse(script.begin(), script.end());
+};
+
+std::vector<Edit> myers(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    std::vector<Edit> script;
+    Differ(a, b, script).solve(0, a.size(), 0, b.size());
     return script;
 }
 
